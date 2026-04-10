@@ -41,7 +41,7 @@ from src.services.auto_pr import AutoPRError, create_optimization_pr
 from src.services.git_provider import get_git_provider
 from src.services.prompt_file import detect_format, extract_prompt
 from src.utils.crypto import decrypt_token
-from src.utils.pr_template import PRContext
+from src.utils.pr_template import PRContext, build_pr_body, build_pr_title
 from src.worker.evaluators import batch_evaluate_traces, create_evaluator
 
 logger = logging.getLogger(__name__)
@@ -313,6 +313,58 @@ def _run_pipeline(
             "status": "SUCCESS",
             "pr_skipped": True,
             "reason": "mode=optimize_only",
+        }
+
+    # --- Mode check: pr_preview — generate preview data, no git push (D-16, D-18) ---
+    if task.mode == "pr_preview":
+        logger.info("Task %s mode=pr_preview — generating preview data", task.id)
+        prev_prompt = (
+            session.query(PromptVersion)
+            .filter_by(task_id=task.id, status="active")
+            .first()
+        )
+        few_shots = _extract_few_shot_examples(prompt_version.dspy_state_json)
+        ctx = PRContext(
+            task_name=task.name,
+            version_number=prompt_version.version_number,
+            before_score=prev_prompt.eval_score if prev_prompt else None,
+            after_score=dataset_score,
+            feedback_count=len(examples),
+            optimizer=prompt_version.optimizer or "MIPROv2",
+            teacher_model=job_meta.get("teacher_model", settings.TEACHER_MODEL),
+            judge_model=job_meta.get("judge_model", settings.JUDGE_MODEL),
+            trials_completed=job_meta.get("trials_completed", 0),
+            duration_seconds=job_meta.get("duration_seconds", 0),
+            train_size=len(train),
+            val_size=len(val),
+            old_prompt_text=prev_prompt.prompt_text if prev_prompt else None,
+            new_prompt_text=prompt_text,
+            few_shot_examples=few_shots,
+            job_id=str(job.id),
+            dspy_version=job_meta.get("dspy_version"),
+            litellm_version=job_meta.get("litellm_version"),
+            cost_usd=job_meta.get("cost_usd"),
+            judge_score=prompt_version.judge_score,
+        )
+        pr_body = build_pr_body(ctx)
+        pr_title = build_pr_title(ctx)
+        file_path = task.prompt_path or f"prompts/{task.name}.txt"
+        preview_data = {
+            "pr_body": pr_body,
+            "pr_title": pr_title,
+            "old_prompt": prev_prompt.prompt_text if prev_prompt else None,
+            "new_prompt": prompt_text,
+            "file_path": file_path,
+        }
+        _update_job_status(
+            session, job, "SUCCESS", "completed",
+            extra_metadata={**job_meta, "pr_preview": preview_data},
+        )
+        return {
+            "job_id": str(job.id),
+            "status": "SUCCESS",
+            "pr_skipped": True,
+            "reason": "mode=pr_preview — preview data stored in job_metadata",
         }
 
     # --- Quality gate: skip PR if scores are too low ---
