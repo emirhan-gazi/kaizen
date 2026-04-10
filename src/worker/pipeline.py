@@ -305,6 +305,16 @@ def _run_pipeline(
         job.id, next_version, dataset_score, duration,
     )
 
+    # --- Mode check: skip PR if optimize_only ---
+    if task.mode == "optimize_only":
+        logger.info("Task %s mode=optimize_only — skipping PR creation", task.id)
+        return {
+            "job_id": str(job.id),
+            "status": "SUCCESS",
+            "pr_skipped": True,
+            "reason": "mode=optimize_only",
+        }
+
     # --- Quality gate: skip PR if scores are too low ---
     min_score = 0.3
     if dataset_score < min_score and judge_score < min_score:
