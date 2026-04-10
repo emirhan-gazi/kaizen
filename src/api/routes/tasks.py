@@ -221,9 +221,9 @@ async def delete_task(
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    await db.execute(delete(Trace).where(Trace.task_id == task_id))
-    await db.execute(delete(FeedbackEntry).where(FeedbackEntry.task_id == task_id))
-    await db.execute(delete(PromptVersion).where(PromptVersion.task_id == task_id))
     await db.execute(delete(OptimizationJob).where(OptimizationJob.task_id == task_id))
+    await db.execute(delete(PromptVersion).where(PromptVersion.task_id == task_id))
+    await db.execute(delete(FeedbackEntry).where(FeedbackEntry.task_id == task_id))
+    await db.execute(delete(Trace).where(Trace.task_id == task_id))
     await db.delete(task)
 
