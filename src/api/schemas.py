@@ -63,6 +63,7 @@ class TaskSummary(BaseModel):
     prompt_locator: str | None = None
     feedback_source: str = "sdk"
     auto_eval: bool = False
+    mode: str = "optimize_only"
     # Legacy aliases (backwards compat)
     github_repo: str | None = None
     github_base_branch: str | None = None
