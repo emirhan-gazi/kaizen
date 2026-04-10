@@ -7,12 +7,19 @@ import { PromptDiff } from "@/components/prompt-diff";
 import { createPrFromPreview, rejectOptimization } from "@/lib/api";
 import type { JobResponse } from "@/lib/api";
 
+interface FileChange {
+  path: string;
+  old_content: string;
+  new_content: string;
+}
+
 interface PrPreviewData {
   pr_body: string;
   pr_title: string;
   old_prompt: string | null;
   new_prompt: string;
   file_path: string;
+  file_changes?: FileChange[];
 }
 
 interface PrPreviewModalProps {
@@ -144,16 +151,34 @@ export function PrPreviewModal({
             {/* Tab content */}
             <div className="flex-1 overflow-auto p-4">
               {activeTab === "file" && (
-                <div>
-                  <p className="mb-2 text-xs text-muted-foreground">
-                    {preview.file_path}
-                  </p>
-                  <PromptDiff
-                    oldText={preview.old_prompt ?? ""}
-                    newText={preview.new_prompt}
-                    oldLabel="Current"
-                    newLabel="Optimized"
-                  />
+                <div className="space-y-4">
+                  {preview.file_changes && preview.file_changes.length > 0 ? (
+                    preview.file_changes.map((fc, i) => (
+                      <div key={i}>
+                        <p className="mb-2 text-xs font-medium text-muted-foreground">
+                          {fc.path}
+                        </p>
+                        <PromptDiff
+                          oldText={fc.old_content}
+                          newText={fc.new_content}
+                          oldLabel="Current"
+                          newLabel="Modified"
+                        />
+                      </div>
+                    ))
+                  ) : (
+                    <div>
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        {preview.file_path}
+                      </p>
+                      <PromptDiff
+                        oldText={preview.old_prompt ?? ""}
+                        newText={preview.new_prompt}
+                        oldLabel="Current"
+                        newLabel="Optimized"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
               {activeTab === "prompt" && (

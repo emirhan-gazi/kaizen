@@ -39,7 +39,7 @@ from src.models.base import (
 )
 from src.services.auto_pr import AutoPRError, create_optimization_pr
 from src.services.git_provider import get_git_provider
-from src.services.prompt_file import detect_format, extract_prompt
+from src.services.prompt_file import detect_format, extract_prompt, replace_prompt
 from src.utils.crypto import decrypt_token
 from src.utils.pr_template import PRContext, build_pr_body, build_pr_title
 from src.worker.evaluators import batch_evaluate_traces, create_evaluator
@@ -355,12 +355,43 @@ def _run_pipeline(
         pr_body = build_pr_body(ctx)
         pr_title = build_pr_title(ctx)
         file_path = task.prompt_path or task.prompt_file or f"prompts/{task.name}.txt"
+
+        # Generate actual file diffs — what the PR would change
+        file_changes = []
+        if task.prompt_file and task.prompt_locator:
+            try:
+                provider_type = task.git_provider or settings.GIT_PROVIDER
+                git_repo = task.git_repo or settings.GIT_REPO
+                git_base_branch = task.git_base_branch or settings.GIT_BASE_BRANCH or "main"
+                git_token_encrypted = task.git_token_encrypted
+                token = decrypt_token(git_token_encrypted) if git_token_encrypted else settings.GIT_TOKEN
+                if git_repo and token:
+                    provider = get_git_provider(
+                        provider_type,
+                        token=token,
+                        base_url=task.git_base_url or settings.GIT_BASE_URL or "",
+                        project=task.git_project or settings.GIT_PROJECT or "",
+                        repo=git_repo,
+                    )
+                    fc = provider.read_file(task.prompt_file, ref=git_base_branch)
+                    original_file = fc.content
+                    fmt = detect_format(task.prompt_file)
+                    modified_file = replace_prompt(original_file, fmt, task.prompt_locator, prompt_text)
+                    file_changes.append({
+                        "path": task.prompt_file,
+                        "old_content": original_file,
+                        "new_content": modified_file,
+                    })
+            except Exception as exc:
+                logger.warning("Could not generate file diff for preview: %s", exc)
+
         preview_data = {
             "pr_body": pr_body,
             "pr_title": pr_title,
             "old_prompt": existing_prompt,
             "new_prompt": prompt_text,
             "file_path": file_path,
+            "file_changes": file_changes,
         }
         job_meta["pr_preview"] = preview_data
         _update_job_status(
