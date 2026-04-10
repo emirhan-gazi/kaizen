@@ -1,0 +1,183 @@
+import { Callout } from 'nextra/components'
+
+# Traces
+
+Traces record individual LLM calls captured by the SDK's auto-instrumentation. Each
+trace stores the prompt, response, model, token count, and latency. Traces can be
+scored after the fact — scored traces are automatically converted to feedback entries
+for the optimization pipeline.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/traces` | Create a trace |
+| `POST` | `/api/v1/traces/\{trace_id\}/score` | Score a trace |
+| `GET` | `/api/v1/traces` | List traces |
+
+<Callout>
+Traces are typically created automatically by the SDK's `@ct.trace` decorator or
+`with ct.trace_context()` context manager. You rarely need to call this endpoint directly.
+</Callout>
+
+---
+
+## POST /api/v1/traces
+
+Ingest a trace from an LLM call. Usually called by the SDK automatically.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `task_id` | UUID | ✅ | The task this trace belongs to |
+| `prompt_text` | string | — | The prompt sent to the LLM |
+| `response_text` | string | — | The LLM's response |
+| `model` | string | — | Model identifier (e.g., `"gpt-4o"`) |
+| `tokens` | integer | — | Total token count for the call |
+| `latency_ms` | float | — | Round-trip latency in milliseconds |
+| `source_file` | string | — | Source file where the call was made |
+| `source_variable` | string | — | Variable name of the traced DSPy module |
+| `metadata` | object | — | Arbitrary key/value metadata |
+
+### Example Request
+
+```bash
+curl -X POST http://localhost:8000/api/v1/traces \
+  -H "X-API-Key: kaizen_abc123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+    "prompt_text": "You are an expert support engineer. Ticket: Login fails on Safari",
+    "response_text": "Authentication issue on Safari browser. Check OAuth token handling.",
+    "model": "gpt-4o",
+    "tokens": 187,
+    "latency_ms": 423.5,
+    "source_file": "app/support/classifier.py",
+    "source_variable": "summarizer"
+  }'
+```
+
+### Response — 201 Created
+
+```json
+{
+  "id": "e5f6a7b8-c9d0-1234-efab-234567890123",
+  "task_id": "550e8400-e29b-41d4-a716-446655440000",
+  "prompt_text": "You are an expert support engineer. Ticket: Login fails on Safari",
+  "response_text": "Authentication issue on Safari browser. Check OAuth token handling.",
+  "model": "gpt-4o",
+  "tokens": 187,
+  "latency_ms": 423.5,
+  "source_file": "app/support/classifier.py",
+  "source_variable": "summarizer",
+  "score": null,
+  "scored_by": null,
+  "metadata": null,
+  "created_at": "2024-01-15T11:00:00Z"
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+| `404` | `task_id` refers to a non-existent task |
+
+---
+
+## POST /api/v1/traces/\{trace_id\}/score
+
+Attach a quality score to an existing trace. Once scored, the trace is
+available as a training signal for optimization.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `trace_id` | UUID | The trace's unique identifier |
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `score` | float | ✅ | Quality score between `0.0` and `1.0` |
+| `scored_by` | string | — | Who/what scored this trace (default: `"sdk"`) |
+
+### Example Request
+
+```bash
+curl -X POST \
+  "http://localhost:8000/api/v1/traces/e5f6a7b8-c9d0-1234-efab-234567890123/score" \
+  -H "X-API-Key: kaizen_abc123" \
+  -H "Content-Type: application/json" \
+  -d '{"score": 0.8, "scored_by": "user"}'
+```
+
+### Response — 200 OK
+
+Returns the updated [TraceResponse object](#post-apiv1traces) with `score` and `scored_by` populated.
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+| `404` | Trace not found |
+| `422` | `score` is outside `[0.0, 1.0]` |
+
+---
+
+## GET /api/v1/traces
+
+List traces, optionally filtered by task. Returns newest traces first.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `task_id` | UUID (string) | Filter by task ID |
+| `limit` | integer | Number of results (default: `100`, max: `1000`) |
+| `offset` | integer | Number of entries to skip (default: `0`) |
+
+### Example Request
+
+```bash
+curl -H "X-API-Key: kaizen_abc123" \
+  "http://localhost:8000/api/v1/traces?task_id=550e8400-e29b-41d4-a716-446655440000&limit=50"
+```
+
+### Response — 200 OK
+
+```json
+[
+  {
+    "id": "e5f6a7b8-c9d0-1234-efab-234567890123",
+    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+    "prompt_text": "You are an expert support engineer...",
+    "response_text": "Authentication issue on Safari browser.",
+    "model": "gpt-4o",
+    "tokens": 187,
+    "latency_ms": 423.5,
+    "source_file": "app/support/classifier.py",
+    "source_variable": "summarizer",
+    "score": 0.8,
+    "scored_by": "user",
+    "metadata": null,
+    "created_at": "2024-01-15T11:00:00Z"
+  }
+]
+```
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |

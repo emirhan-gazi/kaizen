@@ -1,0 +1,150 @@
+import { Callout } from 'nextra/components'
+
+# Feedback
+
+Feedback entries are the core training signal for Kaizen. Each entry records
+an LLM input/output pair with a quality score. When the live feedback count reaches the
+task's `feedback_threshold`, optimization is automatically triggered.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/feedback` | Submit a feedback entry |
+| `GET` | `/api/v1/feedback` | List feedback entries |
+
+---
+
+## POST /api/v1/feedback
+
+Submit a feedback entry for a task. If the resulting live feedback count reaches the
+task's `feedback_threshold`, an optimization job is automatically dispatched.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `task_id` | UUID | ✅ | The task this feedback belongs to |
+| `inputs` | object | — | Input fields used for the LLM call. Must match the task's `schema_json` exactly if one is defined. |
+| `output` | string | — | The LLM's output for this input |
+| `score` | float | — | Quality score between `0.0` and `1.0` |
+| `source` | string | — | Source of this feedback: `"sdk"`, `"user_rating"`, `"auto_eval"`, or `"seed"` (default: `"sdk"`) |
+| `metadata` | object | — | Arbitrary key/value metadata |
+
+<Callout>
+Only feedback with `source` other than `"seed"` counts toward the auto-trigger threshold.
+Seed feedback is used as training data but does not advance the threshold counter.
+</Callout>
+
+### Example Request
+
+```bash
+curl -X POST http://localhost:8000/api/v1/feedback \
+  -H "X-API-Key: kaizen_abc123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+    "inputs": {
+      "ticket_text": "Login fails on Safari",
+      "priority": "high"
+    },
+    "output": "Authentication issue on Safari browser. Check OAuth token handling.",
+    "score": 0.9,
+    "source": "sdk",
+    "metadata": {"model": "gpt-4o", "latency_ms": 450}
+  }'
+```
+
+### Response — 201 Created
+
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "task_id": "550e8400-e29b-41d4-a716-446655440000",
+  "inputs": {
+    "ticket_text": "Login fails on Safari",
+    "priority": "high"
+  },
+  "output": "Authentication issue on Safari browser. Check OAuth token handling.",
+  "score": 0.9,
+  "source": "sdk",
+  "metadata": {"model": "gpt-4o", "latency_ms": 450},
+  "created_at": "2024-01-15T10:35:00Z"
+}
+```
+
+### Auto-Trigger Behavior
+
+After each feedback submission, the server:
+
+1. Counts live (non-seed) feedback entries since the last successful optimization
+2. If the count reaches `feedback_threshold`, acquires a Redis lock and dispatches an optimization job
+3. Returns the feedback response immediately — the optimization runs asynchronously
+
+The Redis lock (5-minute TTL) prevents duplicate jobs from being dispatched at the threshold boundary.
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+| `404` | `task_id` refers to a non-existent task |
+| `422` | `score` is outside `[0.0, 1.0]`, or `inputs` doesn't match the task's `schema_json` |
+
+---
+
+## GET /api/v1/feedback
+
+List feedback entries, optionally filtered by task. Returns newest entries first.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `task_id` | UUID (string) | Filter by task ID |
+| `limit` | integer | Number of results (default: `100`, max: `1000`) |
+| `offset` | integer | Number of entries to skip (default: `0`) |
+
+### Example Request
+
+```bash
+curl -H "X-API-Key: kaizen_abc123" \
+  "http://localhost:8000/api/v1/feedback?task_id=550e8400-e29b-41d4-a716-446655440000&limit=20&offset=0"
+```
+
+### Response — 200 OK
+
+```json
+[
+  {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+    "inputs": {"ticket_text": "Login fails on Safari", "priority": "high"},
+    "output": "Authentication issue on Safari browser.",
+    "score": 0.9,
+    "source": "sdk",
+    "metadata": null,
+    "created_at": "2024-01-15T10:35:00Z"
+  },
+  {
+    "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+    "inputs": {"ticket_text": "Dark mode not working", "priority": "low"},
+    "output": "UI theme preference not persisting across sessions.",
+    "score": 0.85,
+    "source": "sdk",
+    "metadata": null,
+    "created_at": "2024-01-15T10:20:00Z"
+  }
+]
+```
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |

@@ -1,0 +1,33 @@
+# API Reference
+
+The Kaizen REST API provides endpoints for managing tasks, feedback,
+prompts, optimization jobs, traces, and API keys.
+
+## Base URL
+
+```
+http://localhost:8000/api/v1
+```
+
+## Authentication
+
+All endpoints (except `/health`) require an `X-API-Key` header:
+
+```bash
+curl -H "X-API-Key: your-api-key" http://localhost:8000/api/v1/tasks
+```
+
+## Error Format
+
+The API uses RFC 7807 problem details for error responses:
+
+```json
+{
+  "type": "https://kaizen.dev/errors/not-found",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "Task with ID 'abc' not found"
+}
+```
+
+Explore the endpoint reference pages for detailed documentation on each resource.

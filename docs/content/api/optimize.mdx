@@ -1,0 +1,174 @@
+import { Callout } from 'nextra/components'
+
+# Optimize
+
+The optimize endpoint triggers an on-demand DSPy optimization run for a task.
+It returns immediately with a job ID and cost estimate — the actual optimization
+runs asynchronously in the Celery worker.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/optimize/\{task_id\}` | Trigger optimization for a task |
+
+---
+
+## POST /api/v1/optimize/\{task_id\}
+
+Trigger an optimization job for the specified task. The server:
+
+1. Checks that no active optimization job already exists for this task
+2. Counts available feedback entries
+3. Estimates the optimization cost
+4. Creates a job record with status `PENDING`
+5. Dispatches the Celery task asynchronously
+6. Returns the job details and cost estimate immediately
+
+**Authentication:** Required (`X-API-Key`)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `task_id` | UUID | The task's unique identifier |
+
+### Example Request
+
+```bash
+curl -X POST \
+  "http://localhost:8000/api/v1/optimize/550e8400-e29b-41d4-a716-446655440000" \
+  -H "X-API-Key: kaizen_abc123"
+```
+
+### Response — 200 OK
+
+```json
+{
+  "job": {
+    "id": "f1e2d3c4-b5a6-7890-fedc-ba0987654321",
+    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+    "prompt_version_id": null,
+    "status": "PENDING",
+    "triggered_by": "api_on_demand",
+    "feedback_count": 52,
+    "pr_url": null,
+    "error_message": null,
+    "job_metadata": null,
+    "progress_step": "PENDING",
+    "started_at": null,
+    "completed_at": null,
+    "created_at": "2024-01-15T10:29:55Z"
+  },
+  "cost_estimate": {
+    "estimated_cost_usd": 0.42,
+    "estimated_llm_calls": 84,
+    "train_size": 41,
+    "val_size": 11,
+    "max_trials": 10,
+    "teacher_model": "gpt-4o",
+    "judge_model": "gpt-4o-mini"
+  },
+  "budget_warning": null
+}
+```
+
+### Response Fields
+
+**Top-level:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `job` | JobResponse | The created optimization job (see [Jobs](/api/jobs)) |
+| `cost_estimate` | CostEstimate | Estimated cost breakdown for this run |
+| `budget_warning` | string | Warning message if estimated cost exceeds task budget (non-blocking) |
+
+**`cost_estimate` fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `estimated_cost_usd` | float | Estimated total cost in USD |
+| `estimated_llm_calls` | integer | Estimated number of LLM API calls |
+| `train_size` | integer | Number of training examples (80% of feedback) |
+| `val_size` | integer | Number of validation examples (20% of feedback) |
+| `max_trials` | integer | Maximum optimization trials configured |
+| `teacher_model` | string | Teacher LLM model to be used |
+| `judge_model` | string | Judge/evaluator LLM model to be used |
+
+<Callout>
+The `budget_warning` field is informational only. The job is **always dispatched** even
+if the estimated cost exceeds the task's `cost_budget`. The warning lets you decide
+whether to monitor or cancel the job, but does not block execution.
+</Callout>
+
+### Budget Warning Example
+
+When `estimated_cost_usd` exceeds the task's `cost_budget`:
+
+```json
+{
+  "job": { "id": "f1e2d3c4-...", "status": "PENDING", ... },
+  "cost_estimate": {
+    "estimated_cost_usd": 2.50,
+    "estimated_llm_calls": 500,
+    "train_size": 80,
+    "val_size": 20,
+    "max_trials": 10,
+    "teacher_model": "gpt-4o",
+    "judge_model": "gpt-4o-mini"
+  },
+  "budget_warning": "Estimated cost $2.50 exceeds budget $1.00"
+}
+```
+
+### Full Optimization Workflow
+
+```bash
+# Step 1: Trigger optimization
+RESPONSE=$(curl -s -X POST \
+  "http://localhost:8000/api/v1/optimize/550e8400-e29b-41d4-a716-446655440000" \
+  -H "X-API-Key: kaizen_abc123")
+
+JOB_ID=$(echo "$RESPONSE" | jq -r '.job.id')
+COST=$(echo "$RESPONSE" | jq -r '.cost_estimate.estimated_cost_usd')
+echo "Job $JOB_ID started. Estimated cost: \$$COST"
+
+# Step 2: Poll for completion
+while true; do
+  JOB=$(curl -s -H "X-API-Key: kaizen_abc123" \
+    "http://localhost:8000/api/v1/jobs/$JOB_ID")
+  STATUS=$(echo "$JOB" | jq -r '.status')
+  STEP=$(echo "$JOB" | jq -r '.progress_step')
+
+  echo "Status: $STATUS ($STEP)"
+
+  if [[ "$STATUS" == "SUCCESS" ]]; then
+    PR_URL=$(echo "$JOB" | jq -r '.pr_url')
+    echo "✅ Done! PR: $PR_URL"
+    break
+  elif [[ "$STATUS" == "FAILED" ]]; then
+    ERROR=$(echo "$JOB" | jq -r '.error_message')
+    echo "❌ Failed: $ERROR"
+    break
+  elif [[ "$STATUS" == "PR_FAILED" ]]; then
+    echo "⚠️  Optimization succeeded but PR creation failed. Retry with:"
+    echo "curl -X POST http://localhost:8000/api/v1/jobs/$JOB_ID/retry-pr -H 'X-API-Key: kaizen_abc123'"
+    break
+  fi
+
+  sleep 10
+done
+
+# Step 3: Use the new active prompt
+curl -H "X-API-Key: kaizen_abc123" \
+  "http://localhost:8000/api/v1/prompts/550e8400-e29b-41d4-a716-446655440000"
+```
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `400` | No feedback entries available for this task |
+| `401` | Missing or invalid API key |
+| `404` | Task not found |
+| `409` | An active optimization job already exists for this task (status: `PENDING`, `RUNNING`, `EVALUATING`, or `COMPILING`) |

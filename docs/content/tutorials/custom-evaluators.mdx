@@ -1,0 +1,188 @@
+import { Steps, Callout, Tabs } from 'nextra/components'
+
+# Custom Evaluators
+
+By default, CT uses an LLM-as-judge strategy to evaluate candidate prompts during optimization. This tutorial shows how to configure the judge model, customize evaluation criteria, and understand how scores determine the winning prompt.
+
+---
+
+## Default Evaluator
+
+When you trigger optimization without specifying an evaluator, CT runs its built-in LLM-as-judge evaluator:
+
+<Callout type="info">
+  The LLM-as-judge evaluator runs **3 evaluations per example** with randomized response ordering to prevent position bias. The final score is the majority vote (average) of the 3 judgements.
+</Callout>
+
+The default judge model is `gpt-4o-mini` and the default teacher model (used to generate candidate prompts) is `gpt-4o`. Both are configurable.
+
+---
+
+## Configuring Judge Criteria
+
+Pass `evaluator_config` and model overrides when creating a task:
+
+```python
+from kaizen_sdk import CTClient
+
+client = CTClient()
+
+task = client.create_task(
+    name="summarize_ticket",
+    description="Summarize support tickets into one or two sentences",
+    feedback_threshold=50,
+    evaluator_config={
+        "criteria": "accuracy, completeness, conciseness",
+        "scale": "0-1",
+    },
+    judge_model="gpt-4o",           # upgrade judge for higher quality evaluation
+    teacher_model="gpt-4o-mini",    # cheaper model for generating candidates
+)
+```
+
+### `evaluator_config` fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `criteria` | `str` | Comma-separated evaluation criteria (e.g. `"accuracy, conciseness"`) |
+| `scale` | `str` | Score scale description shown to the judge (e.g. `"0-1"`, `"1-5"`) |
+
+The judge model receives a prompt like:
+
+> "Score the following output on a scale of 0-1 for: accuracy, completeness, conciseness."
+
+Changing `criteria` shifts what the judge optimizes for — be explicit about what "good" means for your task.
+
+---
+
+## Updating an Existing Task
+
+You can update evaluator settings on an existing task via the API:
+
+```python
+import httpx
+
+httpx.patch(
+    f"{client._base_url}/api/v1/tasks/{task_id}",
+    headers={"X-API-Key": client._api_key},
+    json={
+        "evaluator_config": {
+            "criteria": "accuracy, tone, brevity",
+            "scale": "0-1",
+        },
+        "judge_model": "gpt-4o",
+    },
+)
+```
+
+Changes take effect on the next optimization run.
+
+---
+
+## Composite Evaluators
+
+For complex tasks, list multiple criteria in `evaluator_config.criteria`. The judge evaluates all criteria in a single call and returns a combined score. This is more cost-effective than running separate evaluations per criterion.
+
+```python
+task = client.create_task(
+    name="customer_response",
+    evaluator_config={
+        "criteria": "empathy, accuracy, resolution_clarity, professional_tone",
+        "scale": "0-1",
+    },
+    judge_model="gpt-4o",
+)
+```
+
+<Callout type="tip">
+  Use 2–5 criteria for best results. Too many criteria in a single prompt can reduce judge reliability. If you need more, consider splitting into separate tasks.
+</Callout>
+
+---
+
+## Using Deterministic Metrics Alongside LLM-as-Judge
+
+For tasks with verifiable outputs (code generation, structured extraction, classification), combine the LLM judge with deterministic metrics by post-processing feedback before logging.
+
+### Exact match
+
+```python
+def evaluate_and_log(task_id: str, inputs: dict, output: str, expected: str) -> None:
+    """Score by exact match, then log to CT."""
+    score = 1.0 if output.strip() == expected.strip() else 0.0
+    client.log_feedback(
+        task_id=task_id,
+        inputs=inputs,
+        output=output,
+        score=score,
+        source="deterministic",
+    )
+```
+
+### Custom scoring function
+
+```python
+def rouge_score(hypothesis: str, reference: str) -> float:
+    """Simple unigram recall as a proxy for ROUGE-1."""
+    hyp_tokens = set(hypothesis.lower().split())
+    ref_tokens = set(reference.lower().split())
+    if not ref_tokens:
+        return 0.0
+    return len(hyp_tokens & ref_tokens) / len(ref_tokens)
+
+
+def evaluate_summary(task_id: str, text: str, output: str, reference: str) -> None:
+    score = rouge_score(output, reference)
+    client.log_feedback(
+        task_id=task_id,
+        inputs={"text": text},
+        output=output,
+        score=score,
+        source="rouge",
+    )
+```
+
+### Blended scoring
+
+Combine LLM and deterministic scores for robust evaluation:
+
+```python
+def blended_score(llm_score: float, deterministic_score: float, weight: float = 0.5) -> float:
+    """Blend LLM judge and deterministic metric scores."""
+    return llm_score * weight + deterministic_score * (1 - weight)
+```
+
+<Callout type="info">
+  CT does not enforce how you compute scores — `log_feedback(score=...)` accepts any float in 0–1. Use whatever evaluation logic fits your task.
+</Callout>
+
+---
+
+## Choosing the Right Model Pair
+
+| Use case | `teacher_model` | `judge_model` | Notes |
+|----------|----------------|---------------|-------|
+| Fast / low-cost iteration | `gpt-4o-mini` | `gpt-4o-mini` | ~5× cheaper, less accurate |
+| Balanced (default) | `gpt-4o` | `gpt-4o-mini` | Best cost/quality tradeoff |
+| High-stakes prompts | `gpt-4o` | `gpt-4o` | Highest quality, higher cost |
+| Anthropic models | `claude-3-5-sonnet-20241022` | `claude-3-haiku-20240307` | Via LiteLLM pass-through |
+
+Set `cost_budget` to cap spending per optimization run:
+
+```python
+task = client.create_task(
+    name="summarize_ticket",
+    evaluator_config={"criteria": "accuracy, conciseness"},
+    judge_model="gpt-4o",
+    teacher_model="gpt-4o",
+    cost_budget=2.50,  # hard cap in USD
+)
+```
+
+---
+
+## Next Steps
+
+- **Trigger an optimization:** [Integrate with an Existing App](/tutorials/integrate-existing-app)
+- **Seed training data:** [Seed Data for Cold Start](/tutorials/seed-data)
+- **Auto-PR delivery:** [Auto-PR with GitHub](/tutorials/auto-pr-github)

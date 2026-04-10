@@ -1,0 +1,144 @@
+# Core Concepts
+
+This page defines the key terms and abstractions in Kaizen. Understanding these concepts will help you use the SDK and API effectively.
+
+import { Callout } from 'nextra/components'
+
+## Tasks
+
+A **task** is a named unit of work in your LLM application. Each task has its own feedback history, prompt versions, and optimization configuration. Think of it as a single LLM operation you want to optimize -- for example, "summarize_ticket" or "classify_intent".
+
+```python
+from kaizen_sdk import CTClient
+
+client = CTClient()
+task = client.create_task(
+    name="summarize_ticket",
+    description="Summarize support tickets into one paragraph",
+    feedback_threshold=50
+)
+```
+
+Tasks are created via the SDK (`client.create_task()`) or the API (`POST /api/v1/tasks`). Each task tracks its feedback count and threshold progress, so you always know how close it is to triggering optimization.
+
+## Feedback
+
+**Feedback** entries are input/output/score tuples that train the optimizer. Each entry records what your LLM received, what it produced, and how good the result was. Over time, these entries build the training dataset for DSPy optimization.
+
+```python
+result = client.log_feedback(
+    task_id=task.id,
+    inputs={"text": "Server is down, users cannot log in..."},
+    output="The server is experiencing an outage affecting authentication.",
+    score=0.85,
+    source="sdk",
+    metadata={"user_id": "u-123", "ticket_id": "T-456"}
+)
+```
+
+Feedback can come from three sources:
+- **`sdk`** -- Programmatic scores from your application logic
+- **`user_rating`** -- End-user signals like thumbs up/down
+- **`auto_eval`** -- Automated evaluation scores from batch evaluation jobs
+
+## Traces
+
+**Traces** are individual LLM call records captured by the auto-instrument feature. Each trace includes the model used, token counts, latency, source file and variable name, and the prompt/response text. Traces provide observability into your LLM calls without modifying your application code.
+
+```python
+from kaizen_sdk import instrument
+import litellm
+
+# Level 1: Zero-config auto-capture
+instrument(litellm)
+
+# Make LLM calls as usual -- traces are captured automatically
+response = litellm.completion(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+
+# Score the trace
+response.ct_score(0.9)
+```
+
+Traces differ from feedback in that they are captured automatically and represent raw LLM calls, while feedback is explicitly logged with curated scores.
+
+## Prompts
+
+**Prompts** are versioned text templates managed by Kaizen. Each prompt version has a lifecycle: `draft` -> `active` -> `archived`. When an optimization job completes, it creates a new `draft` version. Activating a version makes it the default returned by `get_prompt()`.
+
+```python
+# Get the currently active prompt for a task
+prompt = client.get_prompt("summarize_ticket")
+print(prompt.prompt_text)       # The optimized prompt text
+print(prompt.version_number)    # e.g., 3
+print(prompt.eval_score)        # e.g., 0.92
+print(prompt.status)            # "active"
+
+# Promote a specific draft to active
+client.activate_prompt(task_id=task.id, version_id="version-uuid")
+```
+
+Prompts are cached by the SDK for 5 minutes (configurable). When a new version is activated, the cache is invalidated and the next `get_prompt()` call fetches the latest version.
+
+## Optimization Jobs
+
+**Optimization jobs** are background Celery tasks that run DSPy MIPROv2 to find better prompts. Each job processes the feedback data for a task, runs multiple trials with candidate prompts, and evaluates them using an LLM-as-judge approach.
+
+Jobs track their full lifecycle:
+
+```
+PENDING -> RUNNING -> EVALUATING -> COMPILING -> SUCCESS
+                                               -> FAILURE
+                                               -> PR_FAILED
+```
+
+You can monitor jobs via the SDK, API, or dashboard:
+
+```python
+result = client.trigger_optimization(task_id=task.id)
+print(f"Job ID: {result.job.id}")
+print(f"Estimated cost: ${result.cost_estimate.estimated_cost_usd:.2f}")
+
+# Poll for completion
+job = client.get_job(result.job.id)
+print(f"Status: {job.status}")
+print(f"PR URL: {job.pr_url}")
+```
+
+Each job includes a pre-dispatch cost estimate in USD, the evaluation scores achieved, and (on success) a link to the auto-PR.
+
+## Auto-PR
+
+**Auto-PR** is the automated pull request created after a successful optimization. The PR contains the optimized prompt file with updated text, and the description includes before/after evaluation scores and job metadata.
+
+This is the key differentiator of Kaizen: instead of silently swapping prompts in production, the platform delivers improvements as reviewable code changes. Your team reviews prompt changes with the same rigor as code changes.
+
+<Callout type="info">
+  Auto-PR requires configuring a Git provider (`GIT_PROVIDER`, `GIT_TOKEN`, `GIT_REPO`).
+  Without it, optimization still works -- prompts are saved as drafts and can be
+  activated manually via the API or dashboard.
+</Callout>
+
+The PR targets a configurable branch and can be set up with GitHub, Bitbucket Server, or GitLab. When the PR is merged, a webhook can automatically activate the new prompt version.
+
+## Threshold
+
+The **threshold** is the configurable feedback count that auto-triggers optimization for a task. The default is 50 entries, meaning optimization runs automatically once 50 feedback entries have been collected.
+
+```python
+# Create a task with a custom threshold
+task = client.create_task(
+    name="classify_intent",
+    feedback_threshold=100  # Wait for 100 entries before optimizing
+)
+
+# Check progress toward threshold
+tasks = client.list_tasks()
+for t in tasks:
+    print(f"{t.name}: {t.feedback_count}/{t.feedback_threshold} "
+          f"({t.threshold_progress:.0%})")
+```
+
+When the threshold is reached, the API acquires a Redis lock (`SET NX EX 300`) to prevent duplicate dispatch if multiple feedback entries arrive simultaneously. You can also trigger optimization manually at any time via `client.trigger_optimization()`, regardless of the feedback count.

@@ -1,0 +1,177 @@
+import { Steps, Callout } from 'nextra/components'
+
+# Set Up Auto-PR with Bitbucket Server
+
+This tutorial configures CT to open pull requests on a **self-hosted Bitbucket Server** (also known as Bitbucket Data Center) instance. The flow is identical to GitHub — CT triggers after optimization and opens a PR — but the environment variables differ.
+
+**Prerequisites:**
+- A running CT server
+- Access to a Bitbucket Server instance (on-premises URL)
+- A Bitbucket Server account with permission to create PRs on the target repository
+- A task already created (see [Integrate with an Existing App](/tutorials/integrate-existing-app))
+
+---
+
+<Steps>
+
+### Create a Bitbucket Server Personal Access Token
+
+Log in to your Bitbucket Server instance and go to:
+
+**Profile icon → Manage account → Personal access tokens → Create token**
+
+Fill in:
+- **Token name:** `kaizen-auto-pr`
+- **Permissions:**
+  - **Projects:** Read
+  - **Repositories:** Write
+  - **Pull requests:** Write
+
+Click **Create** and copy the token — it is shown only once.
+
+<Callout type="info">
+  Bitbucket Server tokens use project-scoped permissions. Make sure the token has access to the specific project and repository where CT will open PRs.
+</Callout>
+
+### Configure environment variables
+
+Add the following to your CT server's `.env` file:
+
+```bash
+# Git provider selection — use bitbucket_server for on-premises instances
+GIT_PROVIDER=bitbucket_server
+
+# Full base URL of your Bitbucket Server instance (no trailing slash)
+GIT_BASE_URL=https://bitbucket.yourcompany.com
+
+# Your Bitbucket Server Personal Access Token
+GIT_TOKEN=your_bitbucket_token_here
+
+# Bitbucket Server project key (the short ALL-CAPS key shown in project settings)
+GIT_PROJECT=YOUR_PROJECT
+
+# Repository slug (the URL-safe repository name)
+GIT_REPO=your-repo
+
+# Branch to open PRs against
+GIT_BASE_BRANCH=main
+
+# Encryption key for token storage (generate with: openssl rand -hex 32)
+GIT_TOKEN_ENCRYPTION_KEY=your_64_char_hex_key_here
+```
+
+<Callout type="warning">
+  `GIT_BASE_URL` is **required** for Bitbucket Server — it is the base URL of your on-premises instance (e.g., `https://bitbucket.acme.com`). This is the key difference from the GitHub setup, which uses the public GitHub API.
+</Callout>
+
+**Key differences from GitHub setup:**
+
+| Variable | GitHub | Bitbucket Server |
+|----------|--------|-----------------|
+| `GIT_PROVIDER` | `github` | `bitbucket_server` |
+| `GIT_BASE_URL` | *(not used)* | Required — your server URL |
+| `GIT_PROJECT` | *(not used)* | Required — project key |
+| `GIT_REPO` | `owner/repo` format | Repository slug only |
+| Token format | `ghp_...` | Bitbucket Server token |
+
+### Configure the prompt file path on your task
+
+Set `prompt_path` so CT knows which file to update in the PR:
+
+```python
+from kaizen_sdk import CTClient
+import httpx
+
+client = CTClient()
+
+httpx.patch(
+    f"{client._base_url}/api/v1/tasks/{task_id}",
+    headers={"X-API-Key": client._api_key},
+    json={
+        "prompt_path": "src/prompts/summarize_ticket.txt",
+        "prompt_format": "text",
+    },
+)
+```
+
+### Restart the worker
+
+After updating `.env`, restart the Celery worker:
+
+```bash
+podman-compose restart worker
+```
+
+Or with Docker Compose:
+
+```bash
+docker compose restart worker
+```
+
+### Trigger an optimization
+
+Trigger optimization manually or wait for the feedback threshold to be reached:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/optimize/{task_id} \
+  -H "X-API-Key: your_api_key"
+```
+
+Or via the SDK:
+
+```python
+result = client.trigger_optimization(task_id)
+job_id = str(result.job.id)
+print(f"Job started: {job_id}")
+```
+
+### Verify the PR
+
+Poll the job for completion and check the PR URL:
+
+```python
+import time
+
+def wait_for_job(job_id: str) -> str | None:
+    while True:
+        job = client.get_job(job_id)
+        print(f"Status: {job.status}")
+
+        if job.status == "SUCCESS":
+            if job.pr_url:
+                print(f"🔗 PR opened: {job.pr_url}")
+            return job.pr_url
+        elif job.status in ("FAILED", "PR_FAILED"):
+            print(f"❌ Job failed: {job.error_message}")
+            return None
+
+        time.sleep(10)
+
+pr_url = wait_for_job(job_id)
+```
+
+The `pr_url` will be a link directly to the PR on your Bitbucket Server instance.
+
+</Steps>
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `Connection refused` or timeout | Wrong `GIT_BASE_URL` | Verify the URL is reachable from the CT worker container |
+| `401 Unauthorized` | Token expired or revoked | Generate a new token and update `GIT_TOKEN` |
+| `Repository not found` | Wrong `GIT_PROJECT` or `GIT_REPO` | Use the project key (not display name) and repo slug |
+| SSL errors | Self-signed certificate | Set `SSL_VERIFY=false` in `.env` (for internal CAs only) |
+
+<Callout type="warning">
+  If your Bitbucket Server uses a self-signed TLS certificate, you may need to set `SSL_VERIFY=false` in your CT server `.env`. Only do this on trusted internal networks.
+</Callout>
+
+---
+
+## Next Steps
+
+- **GitHub instead?** See [Auto-PR with GitHub](/tutorials/auto-pr-github)
+- **Custom evaluation criteria?** See [Custom Evaluators](/tutorials/custom-evaluators)

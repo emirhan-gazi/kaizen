@@ -1,0 +1,198 @@
+import { Callout } from 'nextra/components'
+
+# Jobs
+
+Optimization jobs represent asynchronous DSPy compilation runs. When optimization
+is triggered (either automatically at threshold or via the [Optimize endpoint](/api/optimize)),
+a job is created and processed by the Celery worker. You can poll the job status to track
+progress and retrieve the PR URL when done.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/jobs` | List optimization jobs |
+| `GET` | `/api/v1/jobs/\{job_id\}` | Get job details |
+| `POST` | `/api/v1/jobs/\{job_id\}/retry-pr` | Retry PR creation |
+
+---
+
+## Job Statuses
+
+| Status | Description |
+|--------|-------------|
+| `PENDING` | Job created, waiting for worker to pick it up |
+| `RUNNING` | Worker has started the optimization process |
+| `EVALUATING` | Running evaluation against the validation set |
+| `COMPILING` | DSPy MIPROv2 compilation in progress |
+| `SUCCESS` | Optimization completed, PR created (if configured) |
+| `FAILED` | Optimization failed (see `error_message`) |
+| `PR_FAILED` | Optimization succeeded but PR creation failed — use `retry-pr` |
+
+---
+
+## GET /api/v1/jobs
+
+List optimization jobs, optionally filtered by task. Returns newest jobs first.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `task_id` | UUID (string) | Filter by task ID |
+| `limit` | integer | Number of results (default: `50`, max: `200`) |
+| `offset` | integer | Number of jobs to skip (default: `0`) |
+
+### Example Request
+
+```bash
+curl -H "X-API-Key: kaizen_abc123" \
+  "http://localhost:8000/api/v1/jobs?task_id=550e8400-e29b-41d4-a716-446655440000&limit=10"
+```
+
+### Response — 200 OK
+
+```json
+[
+  {
+    "id": "f1e2d3c4-b5a6-7890-fedc-ba0987654321",
+    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+    "prompt_version_id": "c3d4e5f6-a7b8-9012-cdef-012345678901",
+    "status": "SUCCESS",
+    "triggered_by": "auto_threshold",
+    "feedback_count": 52,
+    "pr_url": "https://github.com/myorg/myrepo/pull/42",
+    "error_message": null,
+    "job_metadata": {
+      "teacher_model": "gpt-4o",
+      "judge_model": "gpt-4o-mini",
+      "trials_completed": 10,
+      "duration_seconds": 184,
+      "train_size": 41,
+      "val_size": 11,
+      "cost_usd": 0.34
+    },
+    "progress_step": "pr_created",
+    "started_at": "2024-01-15T10:30:00Z",
+    "completed_at": "2024-01-15T10:33:04Z",
+    "created_at": "2024-01-15T10:29:55Z"
+  }
+]
+```
+
+---
+
+## GET /api/v1/jobs/\{job_id\}
+
+Get details for a specific optimization job.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `job_id` | UUID | The job's unique identifier |
+
+### Example Request
+
+```bash
+curl -H "X-API-Key: kaizen_abc123" \
+  "http://localhost:8000/api/v1/jobs/f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+```
+
+### Response — 200 OK
+
+Returns a single JobResponse object. See [List Jobs](#get-apiv1jobs) for the full field list.
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Job unique identifier |
+| `task_id` | UUID | Task this job ran for |
+| `prompt_version_id` | UUID | ID of the prompt version created by this job (null until completion) |
+| `status` | string | Current job status (see [Job Statuses](#job-statuses)) |
+| `triggered_by` | string | `"auto_threshold"` or `"api_on_demand"` |
+| `feedback_count` | integer | Number of feedback entries used for training |
+| `pr_url` | string | GitHub/GitLab PR URL (null if not yet created) |
+| `error_message` | string | Error details if job failed |
+| `job_metadata` | object | Optimization metadata: models, trial count, duration, cost |
+| `progress_step` | string | Current or final step description |
+| `started_at` | datetime | When the worker started processing |
+| `completed_at` | datetime | When the job finished |
+| `created_at` | datetime | When the job was created |
+
+### Polling Pattern
+
+Use this pattern to poll until the job completes:
+
+```bash
+#!/bin/bash
+JOB_ID="f1e2d3c4-b5a6-7890-fedc-ba0987654321"
+API_KEY="kaizen_abc123"
+
+while true; do
+  STATUS=$(curl -s -H "X-API-Key: $API_KEY" \
+    "http://localhost:8000/api/v1/jobs/$JOB_ID" | jq -r '.status')
+
+  echo "Status: $STATUS"
+
+  if [[ "$STATUS" == "SUCCESS" || "$STATUS" == "FAILED" || "$STATUS" == "PR_FAILED" ]]; then
+    break
+  fi
+
+  sleep 5
+done
+```
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+| `404` | Job not found |
+
+---
+
+## POST /api/v1/jobs/\{job_id\}/retry-pr
+
+Retry GitHub/GitLab PR creation for a job that completed optimization but failed to
+create the PR (status `PR_FAILED`). This re-uses the already-compiled prompt version.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `job_id` | UUID | The job's unique identifier |
+
+### Example Request
+
+```bash
+curl -X POST \
+  "http://localhost:8000/api/v1/jobs/f1e2d3c4-b5a6-7890-fedc-ba0987654321/retry-pr" \
+  -H "X-API-Key: kaizen_abc123"
+```
+
+### Response — 200 OK
+
+Returns the updated [JobResponse object](#get-apiv1jobsjob_id) with status `SUCCESS` and
+the new `pr_url` if the retry succeeded.
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+| `404` | Job not found, or associated prompt version not found |
+| `409` | Job status is not `PR_FAILED` |
+| `502` | PR creation failed again (error in `detail` field) |
+
+<Callout type="warning">
+If `retry-pr` returns `502`, check your Git token permissions and repository configuration
+on the task. Ensure the token has write access to the repository.
+</Callout>

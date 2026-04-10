@@ -1,0 +1,260 @@
+import { Callout } from 'nextra/components'
+
+# Models
+
+**Pydantic response models returned by the CT SDK.**
+
+All models use `extra='ignore'` — new server fields never break older SDK versions. Fields use snake_case throughout.
+
+```python
+from kaizen_sdk.models import Task, FeedbackResult, Prompt, Job, OptimizeResult, CostEstimate, TraceResult
+```
+
+---
+
+## Task
+
+A tuning task (e.g. `"summarize_ticket"`) with its configuration and current status.
+
+```python
+class Task(BaseModel): ...
+```
+
+### Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `id` | `uuid.UUID` | required | Unique task identifier. |
+| `name` | `str` | required | Human-readable task name (e.g. `"summarize_ticket"`). |
+| `description` | `str \| None` | `None` | Optional description of what the task does. |
+| `task_schema` | `dict \| None` | `None` | JSON schema for expected input structure. (API alias: `schema_json`) |
+| `feedback_threshold` | `int` | required | Number of feedback entries before auto-optimization triggers. |
+| `feedback_retention_limit` | `int` | `1000` | Maximum feedback entries to retain per task. |
+| `evaluator_config` | `dict \| None` | `None` | Custom evaluator configuration. |
+| `teacher_model` | `str \| None` | `None` | LLM used as teacher during optimization (e.g. `"gpt-4o"`). |
+| `judge_model` | `str \| None` | `None` | LLM used to judge prompt quality (e.g. `"gpt-4o-mini"`). |
+| `module_type` | `str` | `"predict"` | DSPy module type. |
+| `cost_budget` | `float \| None` | `None` | Maximum USD to spend per optimization run. |
+| `github_repo` | `str \| None` | `None` | Git repository for auto-PR (e.g. `"org/repo"`). |
+| `github_base_branch` | `str \| None` | `None` | Base branch for PRs (e.g. `"main"`). |
+| `prompt_path` | `str \| None` | `None` | File path where the optimized prompt is written. |
+| `prompt_format` | `str \| None` | `None` | Format for the prompt file (e.g. `"python"`, `"text"`). |
+| `created_at` | `datetime` | required | Timestamp when the task was created. |
+| `feedback_count` | `int` | `0` | Total feedback entries logged for this task. |
+| `last_optimization` | `datetime \| None` | `None` | When the most recent optimization run completed. |
+| `active_prompt_score` | `float \| None` | `None` | Eval score of the currently active prompt version. |
+| `threshold_progress` | `str` | `"0/50"` | Human-readable progress toward feedback threshold (e.g. `"42/50"`). |
+
+### Example
+
+```python
+with CTClient() as client:
+    task = client.create_task(name="summarize_ticket", feedback_threshold=100)
+    print(task.id)             # uuid.UUID
+    print(task.threshold_progress)  # "0/100"
+```
+
+---
+
+## FeedbackResult
+
+A single feedback entry logged for a task.
+
+```python
+class FeedbackResult(BaseModel): ...
+```
+
+### Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `id` | `uuid.UUID` | required | Unique feedback entry identifier. |
+| `task_id` | `uuid.UUID` | required | Task this feedback belongs to. |
+| `inputs` | `dict \| None` | `None` | Input variables that were passed to the LLM. |
+| `output` | `str \| None` | `None` | LLM output text that was evaluated. |
+| `score` | `float \| None` | `None` | Quality score in `[0.0, 1.0]`. |
+| `source` | `str \| None` | `None` | Source label (e.g. `"sdk"`, `"human"`, `"auto"`). |
+| `metadata` | `dict \| None` | `None` | Arbitrary metadata attached to this entry. (API alias: `metadata_`) |
+| `created_at` | `datetime` | required | Timestamp when the feedback was logged. |
+
+### Example
+
+```python
+with CTClient() as client:
+    result = client.log_feedback(
+        task_id=str(task.id),
+        inputs={"ticket": "Login broken"},
+        output="User cannot log in.",
+        score=0.95,
+    )
+    print(result.id)        # uuid.UUID
+    print(result.created_at)
+```
+
+---
+
+## Prompt
+
+A prompt version produced by optimization (or the initial baseline).
+
+```python
+class Prompt(BaseModel): ...
+```
+
+<Callout type="info">
+`PromptVersion` is an alias for `Prompt` used in listing contexts. They are the same type.
+</Callout>
+
+### Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `id` | `uuid.UUID` | required | Unique prompt version identifier. |
+| `task_id` | `uuid.UUID` | required | Task this prompt version belongs to. |
+| `version_number` | `int` | required | Monotonically increasing version number. |
+| `prompt_text` | `str \| None` | `None` | The full prompt template text. |
+| `eval_score` | `float \| None` | `None` | Evaluation score achieved by this version. |
+| `status` | `str` | required | Version status: `"active"`, `"candidate"`, `"archived"`. |
+| `optimizer` | `str \| None` | `None` | Optimizer that produced this version (e.g. `"MIPROv2"`). |
+| `dspy_version` | `str \| None` | `None` | DSPy version used during optimization. |
+| `created_at` | `datetime` | required | Timestamp when this prompt version was created. |
+
+### Example
+
+```python
+with CTClient() as client:
+    prompt = client.get_prompt(str(task.id))
+    print(prompt.prompt_text)
+    print(f"v{prompt.version_number} — score: {prompt.eval_score}")
+```
+
+---
+
+## Job
+
+An optimization job (running or completed).
+
+```python
+class Job(BaseModel): ...
+```
+
+### Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `id` | `uuid.UUID` | required | Unique job identifier. |
+| `task_id` | `uuid.UUID` | required | Task being optimized. |
+| `prompt_version_id` | `uuid.UUID \| None` | `None` | The prompt version produced by this job (set on completion). |
+| `status` | `str` | required | Job status: `"PENDING"`, `"RUNNING"`, `"EVALUATING"`, `"COMPILING"`, `"SUCCESS"`, `"FAILURE"`, `"PR_FAILED"`. |
+| `triggered_by` | `str \| None` | `None` | How the job was triggered (`"api"`, `"threshold"`, `"webhook"`). |
+| `feedback_count` | `int \| None` | `None` | Number of feedback entries used for this run. |
+| `pr_url` | `str \| None` | `None` | Pull request URL if auto-PR was created. |
+| `error_message` | `str \| None` | `None` | Error detail if `status == "FAILURE"` or `"PR_FAILED"`. |
+| `job_metadata` | `dict \| None` | `None` | Internal metadata from the optimization run. |
+| `progress_step` | `str \| None` | `None` | Human-readable current step (e.g. `"Compiling with MIPROv2..."`). |
+| `started_at` | `datetime \| None` | `None` | When the job started running. |
+| `completed_at` | `datetime \| None` | `None` | When the job completed or failed. |
+| `created_at` | `datetime` | required | When the job was created. |
+
+### Example
+
+```python
+with CTClient() as client:
+    job = client.get_job(str(optimize_result.job.id))
+    print(f"{job.status}: {job.progress_step}")
+    if job.status == "SUCCESS":
+        print(f"PR: {job.pr_url}")
+    elif job.status in ("FAILURE", "PR_FAILED"):
+        print(f"Error: {job.error_message}")
+```
+
+---
+
+## OptimizeResult
+
+Returned by [`trigger_optimization()`](/sdk/client#trigger_optimization). Contains the queued job and a cost estimate.
+
+```python
+class OptimizeResult(BaseModel): ...
+```
+
+### Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `job` | [`Job`](#job) | required | The optimization job that was created. |
+| `cost_estimate` | [`CostEstimate`](#costestimate) | required | Estimated cost for this optimization run. |
+| `budget_warning` | `str \| None` | `None` | Warning message if estimated cost exceeds the task's `cost_budget`. |
+
+### Example
+
+```python
+with CTClient() as client:
+    result = client.trigger_optimization(str(task.id))
+    print(f"Job: {result.job.id}, Status: {result.job.status}")
+    print(f"Cost: ${result.cost_estimate.estimated_cost_usd:.4f}")
+    if result.budget_warning:
+        print(f"⚠ {result.budget_warning}")
+```
+
+---
+
+## CostEstimate
+
+Estimated resource usage for an optimization run.
+
+```python
+class CostEstimate(BaseModel): ...
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `estimated_cost_usd` | `float` | Estimated total USD cost for the optimization run. |
+| `estimated_llm_calls` | `int` | Estimated number of LLM API calls. |
+| `train_size` | `int` | Number of feedback entries used for training. |
+| `val_size` | `int` | Number of feedback entries used for validation. |
+| `max_trials` | `int` | Maximum optimization trials planned. |
+| `teacher_model` | `str` | Teacher model that will be used (e.g. `"gpt-4o"`). |
+| `judge_model` | `str` | Judge model that will be used (e.g. `"gpt-4o-mini"`). |
+
+---
+
+## TraceResult
+
+A trace captured by the auto-instrument SDK.
+
+```python
+class TraceResult(BaseModel): ...
+```
+
+### Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `id` | `uuid.UUID` | required | Unique trace identifier. |
+| `task_id` | `uuid.UUID` | required | Task this trace belongs to. |
+| `prompt_text` | `str \| None` | `None` | The prompt text sent to the LLM. |
+| `response_text` | `str \| None` | `None` | The LLM's response text. |
+| `model` | `str \| None` | `None` | Model name (e.g. `"gpt-4o-mini"`). |
+| `tokens` | `int \| None` | `None` | Total tokens used in the LLM call. |
+| `latency_ms` | `float \| None` | `None` | End-to-end latency in milliseconds. |
+| `source_file` | `str \| None` | `None` | Source file where the LLM call was made. |
+| `source_variable` | `str \| None` | `None` | Variable name holding the prompt in source code. |
+| `score` | `float \| None` | `None` | Quality score applied to this trace (if scored). |
+| `scored_by` | `str \| None` | `None` | Who/what scored the trace (e.g. `"sdk"`, `"human"`). |
+| `created_at` | `datetime` | required | Timestamp when the trace was captured. |
+
+### Example
+
+```python
+# TraceResult is returned by CTClient.score()
+with CTClient() as client:
+    trace = client.score(
+        trace_id=response.ct_trace_id,
+        score=0.9,
+        scored_by="human",
+    )
+    print(f"Trace {trace.id}: score={trace.score}, latency={trace.latency_ms}ms")
+```

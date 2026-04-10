@@ -1,0 +1,208 @@
+import { Steps, Callout } from 'nextra/components'
+
+# Seed Data for Cold Start
+
+New tasks start with zero feedback. CT's optimization pipeline requires at least some examples to run effectively. **Seed data** lets you upload historical examples — from logs, labeled datasets, or manual curation — to bootstrap optimization without waiting for production traffic.
+
+<Callout type="info">
+  Seed entries are stored with `source="seed"` and do **not** count toward the auto-trigger threshold. They serve as training data for the first optimization run. To trigger optimization after seeding, either wait for real feedback to reach the threshold or trigger manually.
+</Callout>
+
+---
+
+<Steps>
+
+### The Problem: Cold Start
+
+When you create a new task, its feedback count is 0:
+
+```python
+tasks = client.list_tasks()
+for t in tasks:
+    print(f"{t.name}: {t.threshold_progress}")
+# summarize_ticket: 0/50
+```
+
+Without data, the optimizer has nothing to learn from. If you have historical examples (previous logs, a labeled dataset, or manually curated examples), seed them now.
+
+### Prepare a JSONL file
+
+Create a `.jsonl` file with one JSON object per line. Each entry must have:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `inputs` | object | Yes | Input fields passed to the LLM (dict) |
+| `output` | string | Yes | The LLM output for that input |
+| `score` | float | Yes | Quality score between 0.0 and 1.0 |
+
+Example `seed_data.jsonl`:
+
+```jsonl
+{"inputs": {"text": "Bug: login page throws 500 when password has special chars"}, "output": "Login page crashes with HTTP 500 when the password contains special characters such as @, #, or $.", "score": 0.85}
+{"inputs": {"text": "Feature request: add dark mode to the dashboard"}, "output": "User requested a dark mode option for the dashboard interface.", "score": 0.92}
+{"inputs": {"text": "Question: how do I reset my password?"}, "output": "The user is asking about the password reset process.", "score": 0.78}
+{"inputs": {"text": "Bug: emails not sending after deployment"}, "output": "Post-deployment issue: email sending functionality has stopped working.", "score": 0.90}
+{"inputs": {"text": "Complaint: response time is too slow"}, "output": "Performance complaint regarding slow response times.", "score": 0.65}
+```
+
+<Callout type="tip">
+  Aim for at least 20–30 high-quality seed examples. A diverse set covering different input types gives the optimizer a better training signal. Include both high-scoring (0.8–1.0) and lower-scoring (0.4–0.6) examples to show contrast.
+</Callout>
+
+### Upload via the API
+
+```bash
+curl -X POST http://localhost:8000/api/v1/tasks/{task_id}/seed \
+  -H "X-API-Key: your_api_key" \
+  -F "file=@seed_data.jsonl"
+```
+
+Successful response (HTTP 201):
+
+```json
+{
+  "accepted": 5,
+  "rejected": 0,
+  "total_seeds": 5,
+  "seed_limit": 1000,
+  "errors": []
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `accepted` | Number of seed entries successfully stored |
+| `rejected` | Number of entries rejected (parse errors or capacity limit) |
+| `total_seeds` | Total seed entries now stored for this task |
+| `seed_limit` | Maximum allowed seed entries per task |
+| `errors` | Per-line parse errors (line number + message) |
+
+<Callout type="info">
+  The default seed size limit is configurable via the `SEED_SIZE_LIMIT` environment variable (default: 1000 entries per task). If the limit is reached, additional uploads return a 400 error.
+</Callout>
+
+### Upload via Python
+
+The SDK does not have a dedicated seed method — use `httpx` directly:
+
+```python
+import httpx
+import os
+
+base_url = os.environ.get("KAIZEN_BASE_URL", "http://localhost:8000")
+api_key = os.environ["KAIZEN_API_KEY"]
+
+with open("seed_data.jsonl", "rb") as f:
+    response = httpx.post(
+        f"{base_url}/api/v1/tasks/{task_id}/seed",
+        headers={"X-API-Key": api_key},
+        files={"file": ("seed_data.jsonl", f, "application/jsonl")},
+    )
+    response.raise_for_status()
+    result = response.json()
+    print(f"Accepted: {result['accepted']}")
+    print(f"Rejected: {result['rejected']}")
+    print(f"Total seeds: {result['total_seeds']} / {result['seed_limit']}")
+    if result["errors"]:
+        for err in result["errors"]:
+            print(f"Error on line {err['line']}: {err['message']}")
+```
+
+### Verify the upload
+
+Check the task to confirm seed entries were stored:
+
+```python
+from kaizen_sdk import CTClient
+
+client = CTClient()
+
+tasks = client.list_tasks()
+for t in tasks:
+    if str(t.id) == task_id:
+        print(f"{t.name}: {t.threshold_progress} live feedback entries")
+        print(f"Last optimization: {t.last_optimization or 'never'}")
+```
+
+<Callout type="info">
+  `threshold_progress` shows **live feedback only** (source ≠ "seed"). Seed entries are not counted here — that's by design. They feed the optimizer without artificially inflating the auto-trigger counter.
+</Callout>
+
+### Trigger optimization
+
+With seed data loaded, trigger optimization manually:
+
+```python
+result = client.trigger_optimization(task_id)
+job_id = str(result.job.id)
+print(f"Job started: {job_id}")
+print(f"Estimated cost: ${result.cost_estimate.estimated_cost_usd:.4f}")
+print(f"Training examples: {result.cost_estimate.train_size}")
+```
+
+Monitor progress:
+
+```python
+import time
+
+def wait_for_job(job_id: str) -> None:
+    while True:
+        job = client.get_job(job_id)
+        print(f"[{job.status}] {job.progress_step or ''}")
+        if job.status in ("SUCCESS", "FAILED", "PR_FAILED"):
+            break
+        time.sleep(10)
+
+    if job.status == "SUCCESS":
+        print(f"✅ Done. PR: {job.pr_url or 'No PR configured'}")
+    else:
+        print(f"❌ Failed: {job.error_message}")
+
+wait_for_job(job_id)
+```
+
+Or via `curl`:
+
+```bash
+# Trigger
+curl -X POST http://localhost:8000/api/v1/optimize/{task_id} \
+  -H "X-API-Key: your_api_key"
+
+# Poll status
+curl -s http://localhost:8000/api/v1/jobs/{job_id} \
+  -H "X-API-Key: your_api_key" \
+  | python3 -c "import sys,json; j=json.load(sys.stdin); print(j['status'], j.get('pr_url',''))"
+```
+
+</Steps>
+
+---
+
+## When to Use Seed Data
+
+| Scenario | Recommended approach |
+|----------|---------------------|
+| New task, no production traffic yet | Upload 30–100 historical examples before launch |
+| A/B testing a new prompt | Seed with examples that represent the expected distribution |
+| Recovering from a bad optimization | Re-seed with high-quality examples and re-trigger |
+| Cold-start after data retention purge | Re-upload a curated subset from an archive |
+
+---
+
+## Format Validation
+
+CT validates each line of the JSONL file at upload time:
+
+- `inputs` must be a JSON object (not null, not an array)
+- `output` must be a non-empty string
+- `score` must be a number in range `[0.0, 1.0]`
+
+Invalid lines are returned in the `errors` array and skipped — valid lines are always inserted.
+
+---
+
+## Next Steps
+
+- **Trigger optimization now:** Use `client.trigger_optimization(task_id)` or [API reference](/api/optimize)
+- **Set up auto-PR:** Get optimized prompts delivered as a PR — [Auto-PR with GitHub](/tutorials/auto-pr-github)
+- **Custom evaluators:** Configure how CT judges prompt quality — [Custom Evaluators](/tutorials/custom-evaluators)

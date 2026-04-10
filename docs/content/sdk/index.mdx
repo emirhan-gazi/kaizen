@@ -1,0 +1,32 @@
+# SDK Reference
+
+The Kaizen Python SDK provides a simple interface for collecting feedback,
+retrieving prompts, and triggering optimizations.
+
+## Installation
+
+```bash
+pip install kaizen-sdk
+```
+
+## Quick Example
+
+```python
+from kaizen_sdk import CTClient
+
+client = CTClient(api_key="your-api-key")
+
+# Log feedback
+client.log_feedback(
+    task_id="your-task-id",
+    inputs={"question": "What is CI/CD?"},
+    output="CI/CD stands for...",
+    score=0.9
+)
+
+# Get the active prompt
+prompt = client.get_prompt("your-task-id")
+print(prompt.prompt_text)
+```
+
+Explore the SDK reference pages for detailed documentation on each component.

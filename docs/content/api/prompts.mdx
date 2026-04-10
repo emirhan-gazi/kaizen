@@ -1,0 +1,196 @@
+import { Callout } from 'nextra/components'
+
+# Prompts
+
+The prompts endpoints let you retrieve the active prompt for a task and manage prompt
+versions. Active prompts are served from Redis cache for low-latency reads, making them
+suitable for use in the hot path of your LLM application.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/prompts/\{task_id\}` | Get the active prompt (Redis-cached) |
+| `POST` | `/api/v1/prompts/\{task_id\}/activate` | Activate a prompt version |
+| `GET` | `/api/v1/prompts/\{task_id\}/versions` | List all prompt versions |
+
+---
+
+## GET /api/v1/prompts/\{task_id\}
+
+Return the active prompt for a task. The response is served from Redis cache when
+available, falling back to PostgreSQL on a cache miss.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `task_id` | UUID | The task's unique identifier |
+
+<Callout>
+Active prompts are cached in Redis with a 5-minute TTL. Activating a new version
+immediately invalidates the cache so the next request always returns the latest active prompt.
+</Callout>
+
+### Example Request
+
+```bash
+curl -H "X-API-Key: kaizen_abc123" \
+  "http://localhost:8000/api/v1/prompts/550e8400-e29b-41d4-a716-446655440000"
+```
+
+### Response — 200 OK
+
+```json
+{
+  "id": "c3d4e5f6-a7b8-9012-cdef-012345678901",
+  "task_id": "550e8400-e29b-41d4-a716-446655440000",
+  "version_number": 3,
+  "prompt_text": "You are an expert support engineer. Given a support ticket, write a concise summary...",
+  "eval_score": 0.87,
+  "status": "active",
+  "optimizer": "MIPROv2",
+  "dspy_version": "2.4.1",
+  "created_at": "2024-01-15T09:00:00Z"
+}
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Prompt version unique identifier |
+| `task_id` | UUID | Task this prompt belongs to |
+| `version_number` | integer | Monotonically increasing version number |
+| `prompt_text` | string | The full prompt text |
+| `eval_score` | float | Evaluation score from optimization (0.0–1.0) |
+| `status` | string | `"active"`, `"draft"`, or `"archived"` |
+| `optimizer` | string | Optimizer used (e.g., `"MIPROv2"`) |
+| `dspy_version` | string | DSPy version used during optimization |
+| `created_at` | datetime | When this version was created |
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+| `404` | Task not found, or task has no active prompt |
+
+---
+
+## POST /api/v1/prompts/\{task_id\}/activate
+
+Promote a draft prompt version to active status. The current active version is
+archived automatically. The Redis cache for this task is invalidated immediately.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `task_id` | UUID | The task's unique identifier |
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `version_id` | UUID | ✅ | The ID of the draft prompt version to activate |
+
+### Example Request
+
+```bash
+curl -X POST \
+  "http://localhost:8000/api/v1/prompts/550e8400-e29b-41d4-a716-446655440000/activate?version_id=d4e5f6a7-b8c9-0123-defa-123456789012" \
+  -H "X-API-Key: kaizen_abc123"
+```
+
+### Response — 200 OK
+
+Returns the newly activated [PromptResponse object](#get-apiv1promptstask_id).
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+| `404` | Task not found, or prompt version not found for this task |
+| `409` | The version is not in `"draft"` status (e.g., already `"active"` or `"archived"`) |
+
+---
+
+## GET /api/v1/prompts/\{task_id\}/versions
+
+List all prompt versions for a task, ordered by version number descending (newest first).
+
+**Authentication:** Required (`X-API-Key`)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `task_id` | UUID | The task's unique identifier |
+
+### Example Request
+
+```bash
+curl -H "X-API-Key: kaizen_abc123" \
+  "http://localhost:8000/api/v1/prompts/550e8400-e29b-41d4-a716-446655440000/versions"
+```
+
+### Response — 200 OK
+
+```json
+[
+  {
+    "id": "c3d4e5f6-a7b8-9012-cdef-012345678901",
+    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+    "version_number": 3,
+    "prompt_text": "You are an expert support engineer...",
+    "eval_score": 0.87,
+    "status": "active",
+    "optimizer": "MIPROv2",
+    "dspy_version": "2.4.1",
+    "created_at": "2024-01-15T09:00:00Z"
+  },
+  {
+    "id": "b3c4d5e6-a7b8-9012-cdef-012345678900",
+    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+    "version_number": 2,
+    "prompt_text": "Given a support ticket, summarize the issue in one sentence.",
+    "eval_score": 0.79,
+    "status": "archived",
+    "optimizer": "MIPROv2",
+    "dspy_version": "2.4.1",
+    "created_at": "2024-01-10T14:00:00Z"
+  },
+  {
+    "id": "a3b4c5d6-e7f8-9012-abcd-ef1234567899",
+    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+    "version_number": 1,
+    "prompt_text": "Summarize this support ticket.",
+    "eval_score": null,
+    "status": "archived",
+    "optimizer": null,
+    "dspy_version": null,
+    "created_at": "2024-01-05T12:00:00Z"
+  }
+]
+```
+
+### Prompt Statuses
+
+| Status | Description |
+|--------|-------------|
+| `active` | Currently serving prompt (only one per task) |
+| `draft` | Created by optimization, awaiting manual activation or auto-PR review |
+| `archived` | Previously active, now superseded |
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+| `404` | Task not found |

@@ -1,0 +1,382 @@
+import { Callout } from 'nextra/components'
+
+# CTClient
+
+**Synchronous Python client for Kaizen.**
+
+`CTClient` wraps all CT API endpoints with typed returns, in-memory TTL caching, environment variable configuration, and proper error handling.
+
+```python
+from kaizen_sdk import CTClient
+```
+
+<Callout type="info">
+`CTClient` supports the context manager protocol. Use `with CTClient() as client:` to ensure the underlying HTTP connection pool is closed automatically on exit.
+
+```python
+with CTClient(api_key="sk-...") as client:
+    prompt = client.get_prompt("summarize_ticket")
+    print(prompt.prompt_text)
+```
+</Callout>
+
+---
+
+## Constructor
+
+```python
+CTClient(
+    api_key: str | None = None,
+    base_url: str | None = None,
+    cache_ttl: float = 300.0,
+    timeout: float = 30.0,
+) -> None
+```
+
+### Parameters
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `api_key` | `str \| None` | `None` | CT API key. Falls back to the `KAIZEN_API_KEY` environment variable. Raises `CTError` if neither is set. |
+| `base_url` | `str \| None` | `None` | Base URL of the CT server. Falls back to `KAIZEN_BASE_URL` env var, then `http://localhost:8000`. |
+| `cache_ttl` | `float` | `300.0` | Time-to-live in seconds for the in-memory prompt cache. |
+| `timeout` | `float` | `30.0` | HTTP request timeout in seconds. |
+
+### Example
+
+```python
+from kaizen_sdk import CTClient
+
+# From environment variables (KAIZEN_API_KEY, KAIZEN_BASE_URL)
+client = CTClient()
+
+# Explicit configuration
+client = CTClient(
+    api_key="sk-my-key",
+    base_url="https://ct.my-company.com",
+    cache_ttl=600.0,
+    timeout=60.0,
+)
+```
+
+---
+
+## log_feedback
+
+```python
+log_feedback(
+    task_id: str,
+    inputs: dict | None = None,
+    output: str | None = None,
+    score: float | None = None,
+    source: str = "sdk",
+    metadata: dict | None = None,
+) -> FeedbackResult
+```
+
+Log a feedback entry for a task. Feedback is the training signal that drives prompt optimization.
+
+### Parameters
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `task_id` | `str` | required | UUID or string ID of the task. |
+| `inputs` | `dict \| None` | `None` | Input variables passed to the LLM (e.g. `{"user_message": "..."}`). |
+| `output` | `str \| None` | `None` | The LLM's output text. |
+| `score` | `float \| None` | `None` | Quality score in the range `[0.0, 1.0]`. `None` if not yet scored. |
+| `source` | `str` | `"sdk"` | Source label for the feedback entry (e.g. `"sdk"`, `"human"`, `"auto"`). |
+| `metadata` | `dict \| None` | `None` | Arbitrary JSON metadata to attach to this feedback entry. |
+
+### Returns
+
+[`FeedbackResult`](/sdk/models#feedbackresult) — the created feedback record.
+
+### Example
+
+```python
+from kaizen_sdk import CTClient
+
+with CTClient() as client:
+    result = client.log_feedback(
+        task_id="3b4e1f2a-...",
+        inputs={"user_message": "Summarize this ticket"},
+        output="The ticket is about a login issue.",
+        score=0.9,
+        metadata={"session_id": "abc123"},
+    )
+    print(result.id)  # UUID of the created feedback record
+```
+
+---
+
+## get_prompt
+
+```python
+get_prompt(task_id: str) -> Prompt
+```
+
+Retrieve the active prompt for a task. Results are TTL-cached in memory — repeated calls within `cache_ttl` seconds return the cached value without hitting the API.
+
+### Parameters
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `task_id` | `str` | required | UUID or string ID of the task. |
+
+### Returns
+
+[`Prompt`](/sdk/models#prompt) — the active prompt version for this task.
+
+### Example
+
+```python
+with CTClient() as client:
+    prompt = client.get_prompt("3b4e1f2a-...")
+    print(prompt.prompt_text)
+    print(f"Version: {prompt.version_number}, Score: {prompt.eval_score}")
+```
+
+<Callout type="info">
+Prompts are cached for `cache_ttl` seconds (default 300s). Use [`activate_prompt`](#activate_prompt) after switching versions — it automatically invalidates the cache.
+</Callout>
+
+---
+
+## activate_prompt
+
+```python
+activate_prompt(task_id: str, version_id: str) -> Prompt
+```
+
+Activate a specific prompt version and invalidate the local prompt cache for the task.
+
+### Parameters
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `task_id` | `str` | required | UUID or string ID of the task. |
+| `version_id` | `str` | required | UUID of the prompt version to activate. |
+
+### Returns
+
+[`Prompt`](/sdk/models#prompt) — the newly activated prompt version.
+
+### Example
+
+```python
+with CTClient() as client:
+    # Activate a specific version
+    prompt = client.activate_prompt(
+        task_id="3b4e1f2a-...",
+        version_id="7c8d9e0f-...",
+    )
+    print(f"Activated version {prompt.version_number}")
+```
+
+---
+
+## trigger_optimization
+
+```python
+trigger_optimization(task_id: str) -> OptimizeResult
+```
+
+Trigger a DSPy optimization run for a task. Returns a job handle and a cost estimate.
+
+### Parameters
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `task_id` | `str` | required | UUID or string ID of the task to optimize. |
+
+### Returns
+
+[`OptimizeResult`](/sdk/models#optimizeresult) — contains the queued `Job` and a `CostEstimate`.
+
+### Example
+
+```python
+with CTClient() as client:
+    result = client.trigger_optimization("3b4e1f2a-...")
+    print(f"Job ID: {result.job.id}")
+    print(f"Estimated cost: ${result.cost_estimate.estimated_cost_usd:.4f}")
+    if result.budget_warning:
+        print(f"Warning: {result.budget_warning}")
+```
+
+---
+
+## get_job
+
+```python
+get_job(job_id: str) -> Job
+```
+
+Retrieve the current status of an optimization job. Poll this to wait for completion.
+
+### Parameters
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `job_id` | `str` | required | UUID of the optimization job. |
+
+### Returns
+
+[`Job`](/sdk/models#job) — the job with its current `status` and progress information.
+
+### Example
+
+```python
+import time
+
+with CTClient() as client:
+    result = client.trigger_optimization("3b4e1f2a-...")
+    job_id = str(result.job.id)
+
+    # Poll until done
+    while True:
+        job = client.get_job(job_id)
+        print(f"Status: {job.status} — {job.progress_step}")
+        if job.status in ("SUCCESS", "FAILURE", "PR_FAILED"):
+            break
+        time.sleep(10)
+
+    if job.status == "SUCCESS":
+        print(f"PR: {job.pr_url}")
+```
+
+---
+
+## list_tasks
+
+```python
+list_tasks() -> list[Task]
+```
+
+List all tasks configured in the CT server.
+
+### Returns
+
+`list[`[`Task`](/sdk/models#task)`]` — all tasks.
+
+### Example
+
+```python
+with CTClient() as client:
+    tasks = client.list_tasks()
+    for task in tasks:
+        print(f"{task.id}: {task.name} ({task.feedback_count} feedback entries)")
+```
+
+---
+
+## create_task
+
+```python
+create_task(
+    name: str,
+    description: str | None = None,
+    schema_json: dict | None = None,
+    feedback_threshold: int = 50,
+    **kwargs,
+) -> Task
+```
+
+Create a new task on the CT server.
+
+### Parameters
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `name` | `str` | required | Unique human-readable name for the task (e.g. `"summarize_ticket"`). |
+| `description` | `str \| None` | `None` | Optional description of what this task does. |
+| `schema_json` | `dict \| None` | `None` | JSON schema describing the expected input structure. |
+| `feedback_threshold` | `int` | `50` | Number of feedback entries to collect before triggering auto-optimization. |
+| `**kwargs` | | | Additional task fields passed directly to the API (e.g. `teacher_model`, `judge_model`). |
+
+### Returns
+
+[`Task`](/sdk/models#task) — the newly created task.
+
+### Example
+
+```python
+with CTClient() as client:
+    task = client.create_task(
+        name="summarize_ticket",
+        description="Summarizes customer support tickets into one sentence.",
+        feedback_threshold=100,
+        teacher_model="gpt-4o",
+        judge_model="gpt-4o-mini",
+    )
+    print(f"Created task: {task.id}")
+```
+
+---
+
+## score
+
+```python
+score(trace_id: str, score: float, scored_by: str = "sdk") -> TraceResult
+```
+
+Score a previously captured trace by its ID.
+
+### Parameters
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `trace_id` | `str` | required | UUID of the trace to score. Obtained from `result.ct_trace_id` after an instrumented LLM call. |
+| `score` | `float` | required | Quality score in the range `[0.0, 1.0]`. |
+| `scored_by` | `str` | `"sdk"` | Label identifying who/what generated the score. |
+
+### Returns
+
+[`TraceResult`](/sdk/models#traceresult) — the updated trace with score applied.
+
+### Example
+
+```python
+import litellm
+from kaizen_sdk import CTClient, instrument
+
+instrument(litellm)
+
+response = litellm.completion(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": SUMMARIZE_TICKET}],
+)
+
+# Score the captured trace
+with CTClient() as client:
+    trace = client.score(
+        trace_id=response.ct_trace_id,
+        score=0.85,
+        scored_by="human-review",
+    )
+    print(f"Scored trace {trace.id}: {trace.score}")
+```
+
+---
+
+## close
+
+```python
+close() -> None
+```
+
+Close the underlying HTTP connection pool. Call this when done with the client if not using the context manager.
+
+### Example
+
+```python
+client = CTClient()
+try:
+    tasks = client.list_tasks()
+finally:
+    client.close()
+```
+
+<Callout type="info">
+Prefer using `CTClient` as a context manager (`with CTClient() as client:`) — it calls `close()` automatically on exit.
+</Callout>

@@ -1,0 +1,146 @@
+import { Callout } from 'nextra/components'
+
+# API Keys
+
+API keys authenticate all requests to the Kaizen API. Keys are prefixed with
+`kaizen_` and stored as SHA-256 hashes — the raw key is shown only once at creation time.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/keys` | Create an API key |
+| `DELETE` | `/api/v1/keys/\{key_id\}` | Revoke an API key |
+| `POST` | `/api/v1/keys/bootstrap` | Create the first API key (no auth required) |
+
+---
+
+## POST /api/v1/keys
+
+Create a new API key. The raw key value is returned exactly once — store it securely.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `label` | string | — | Human-readable name for this key (e.g., `"production"`) |
+
+### Example Request
+
+```bash
+curl -X POST http://localhost:8000/api/v1/keys \
+  -H "X-API-Key: kaizen_abc123" \
+  -H "Content-Type: application/json" \
+  -d '{"label": "production-key"}'
+```
+
+### Response — 201 Created
+
+```json
+{
+  "id": "d4e5f6a7-b8c9-0123-defa-123456789012",
+  "key": "kaizen_9f8e7d6c5b4a3e2f1d0c9b8a7e6f5d4c",
+  "label": "production-key",
+  "created_at": "2024-01-15T12:00:00Z"
+}
+```
+
+<Callout type="warning">
+The `key` field is returned **only once** at creation time. It is not stored and cannot
+be retrieved later. Copy it to a secure location (e.g., a secrets manager or `.env` file)
+before closing this response.
+</Callout>
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+
+---
+
+## DELETE /api/v1/keys/\{key_id\}
+
+Revoke an API key. Revoked keys are rejected immediately on subsequent requests.
+The key record is retained in the database with a `revoked_at` timestamp.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `key_id` | UUID | The API key's unique identifier (the `id` field, not the key value) |
+
+### Example Request
+
+```bash
+curl -X DELETE \
+  "http://localhost:8000/api/v1/keys/d4e5f6a7-b8c9-0123-defa-123456789012" \
+  -H "X-API-Key: kaizen_abc123"
+```
+
+### Response — 204 No Content
+
+Empty response body on success.
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+| `404` | Key not found |
+| `409` | Key is already revoked |
+
+---
+
+## POST /api/v1/keys/bootstrap
+
+Create the **first** API key without authentication. This endpoint is designed for
+initial setup and automatically becomes disabled once any key exists.
+
+**Authentication:** Not required
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `label` | string | — | Name for the initial key (defaults to `"bootstrap"`) |
+
+### Example Request
+
+```bash
+curl -X POST http://localhost:8000/api/v1/keys/bootstrap \
+  -H "Content-Type: application/json" \
+  -d '{"label": "initial-key"}'
+```
+
+### Response — 201 Created
+
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "key": "kaizen_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+  "label": "initial-key",
+  "created_at": "2024-01-15T08:00:00Z"
+}
+```
+
+<Callout type="warning">
+Store this key immediately — it is shown only once, just like keys created via
+`POST /api/v1/keys`.
+</Callout>
+
+<Callout>
+**Auto-bootstrap:** On server startup, if no keys exist, one is automatically created and
+written to `.secrets/first-key.txt`. You only need to call this endpoint if you want to
+create a named initial key before auto-bootstrap runs, or in automated provisioning scripts.
+</Callout>
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `403` | Bootstrap disabled — at least one API key already exists |

@@ -1,0 +1,192 @@
+import { Steps, Callout } from 'nextra/components'
+
+# Set Up Auto-PR with GitHub
+
+When an optimization job completes, CT can automatically open a pull request on your GitHub repository with the new prompt. This tutorial walks through creating a GitHub Personal Access Token, configuring CT's environment, and verifying your first auto-generated PR.
+
+**Prerequisites:**
+- A running CT server
+- A GitHub repository where you store prompt files
+- A task already created (see [Integrate with an Existing App](/tutorials/integrate-existing-app))
+
+---
+
+<Steps>
+
+### Create a GitHub Personal Access Token
+
+Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens** and click **Generate new token**.
+
+Fill in:
+- **Token name:** `kaizen-auto-pr`
+- **Expiration:** Set an appropriate expiration (90 days recommended)
+- **Repository access:** Select your target repository
+
+Under **Permissions**, grant:
+- **Contents:** Read and write
+- **Pull requests:** Read and write
+
+Click **Generate token** and copy it immediately — it's shown only once.
+
+<Callout type="warning">
+  Store your token securely. CT encrypts it at rest using `GIT_TOKEN_ENCRYPTION_KEY` before storing in the database. Set a strong encryption key — if it changes, existing encrypted tokens become invalid.
+</Callout>
+
+### Configure environment variables
+
+Add the following to your CT server's `.env` file:
+
+```bash
+# Git provider selection
+GIT_PROVIDER=github
+
+# Your GitHub Personal Access Token
+GIT_TOKEN=ghp_your_token_here
+
+# Repository in "owner/repo" format
+GIT_REPO=your-org/your-repo
+
+# Branch to open PRs against
+GIT_BASE_BRANCH=main
+
+# Encryption key for token storage (generate with: openssl rand -hex 32)
+GIT_TOKEN_ENCRYPTION_KEY=your_64_char_hex_key_here
+```
+
+<Callout type="info">
+  `GIT_REPO` must be in `owner/repo` format (e.g., `acme-corp/llm-app`), not a full URL.
+</Callout>
+
+### Configure the target file on your task
+
+CT needs to know which file in the repository contains the prompt it should update. Set `prompt_path` on your task:
+
+```python
+from kaizen_sdk import CTClient
+
+client = CTClient()
+
+# Update an existing task with the prompt file path
+# (or pass these when creating the task)
+import httpx
+httpx.patch(
+    f"{client._base_url}/api/v1/tasks/{task_id}",
+    headers={"X-API-Key": client._api_key},
+    json={
+        "prompt_path": "src/prompts/summarize_ticket.txt",
+        "prompt_format": "text",
+    },
+)
+```
+
+Or set it at task creation time:
+
+```python
+task = client.create_task(
+    name="summarize_ticket",
+    description="Summarize support tickets",
+    feedback_threshold=50,
+    prompt_path="src/prompts/summarize_ticket.txt",
+    prompt_format="text",
+)
+```
+
+### Restart the worker
+
+After updating `.env`, restart the Celery worker to pick up the new credentials:
+
+```bash
+podman-compose restart worker
+```
+
+Or with Docker Compose:
+
+```bash
+docker compose restart worker
+```
+
+### Trigger an optimization
+
+Once you have enough feedback, CT triggers automatically. To trigger manually:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/optimize/{task_id} \
+  -H "X-API-Key: your_api_key"
+```
+
+Or via the SDK:
+
+```python
+result = client.trigger_optimization(task_id)
+job_id = str(result.job.id)
+print(f"Job started: {job_id}")
+print(f"Estimated cost: ${result.cost_estimate.estimated_cost_usd:.4f}")
+```
+
+### Check the PR
+
+Poll the job until it completes, then retrieve the PR URL:
+
+```python
+import time
+from kaizen_sdk import CTClient
+
+client = CTClient()
+
+def wait_for_job(job_id: str, poll_interval: int = 10) -> str | None:
+    """Poll a job until it finishes. Returns the PR URL or None."""
+    while True:
+        job = client.get_job(job_id)
+        print(f"Status: {job.status}")
+
+        if job.status == "SUCCESS":
+            print(f"✅ Optimization complete!")
+            if job.pr_url:
+                print(f"🔗 PR: {job.pr_url}")
+            return job.pr_url
+        elif job.status in ("FAILED", "PR_FAILED"):
+            print(f"❌ Job failed: {job.error_message}")
+            return None
+
+        time.sleep(poll_interval)
+
+pr_url = wait_for_job(job_id)
+```
+
+Or with `curl`:
+
+```bash
+curl -s http://localhost:8000/api/v1/jobs/{job_id} \
+  -H "X-API-Key: your_api_key" \
+  | python3 -c "import sys, json; j=json.load(sys.stdin); print(j.get('pr_url', 'No PR yet'))"
+```
+
+</Steps>
+
+---
+
+## What the PR Looks Like
+
+CT opens a PR that:
+1. Updates the file at `prompt_path` with the optimized prompt text
+2. Sets the PR title to `chore(ct): optimize prompt for {task_name} (score: {score:.0%})`
+3. Includes the evaluation score and job ID in the PR description
+
+Review the diff and merge when satisfied. On the next optimization cycle, CT opens a new PR against the updated base branch.
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| Job status `PR_FAILED` | Token lacks `Pull requests: Write` scope | Regenerate token with correct scopes |
+| `GIT_REPO not found` | Wrong repo format | Use `owner/repo`, not a URL |
+| Token decryption error | `GIT_TOKEN_ENCRYPTION_KEY` changed | Re-enter token via API with current key |
+
+---
+
+## Next Steps
+
+- **Bitbucket Server?** See [Auto-PR with Bitbucket Server](/tutorials/auto-pr-bitbucket)
+- **Custom evaluation criteria?** See [Custom Evaluators](/tutorials/custom-evaluators)

@@ -1,0 +1,28 @@
+# Kaizen
+
+**CI/CD for LLM prompts -- automatic optimization and delivery.**
+
+Kaizen is a self-hosted platform that closes the feedback loop on your LLM prompts.
+Your application collects real-world feedback via the Python SDK, and when enough signal
+accumulates, Kaizen automatically triggers DSPy-powered optimization, generates an
+improved prompt, and opens a pull request in your repository -- ready for review.
+
+The pipeline works like CI/CD for prompts:
+
+```
+SDK Feedback --> API --> Threshold --> DSPy Optimization --> Auto-PR
+```
+
+1. **Instrument** your app with the lightweight Python SDK
+2. **Collect** user feedback (thumbs up/down, scores, corrections)
+3. **Optimize** automatically when feedback reaches the configured threshold
+4. **Deliver** improved prompts as pull requests to your Git repository
+
+import { Cards } from 'nextra/components'
+
+<Cards>
+  <Cards.Card title="Getting Started" href="/getting-started" />
+  <Cards.Card title="SDK Reference" href="/sdk" />
+  <Cards.Card title="API Reference" href="/api" />
+  <Cards.Card title="Tutorials" href="/tutorials" />
+</Cards>

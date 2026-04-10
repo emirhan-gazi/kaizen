@@ -1,0 +1,140 @@
+# Self-Hosting
+
+Deploy the full Kaizen stack with Docker or Podman.
+
+import { Callout, Steps } from 'nextra/components'
+
+<Steps>
+
+### Clone the repository
+
+```bash
+git clone <repo-url> kaizen
+cd kaizen
+```
+
+### Configure your environment
+
+Copy the example environment file and fill in your settings:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with the following variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@postgres:5432/continuous_tune` | PostgreSQL connection string |
+| `REDIS_URL` | `redis://redis:6379/0` | Redis connection string |
+| `OPENAI_API_KEY` | -- | **Required.** Your LLM provider API key |
+| `TEACHER_MODEL` | `gpt-4o` | Model used by DSPy for generating few-shot examples |
+| `JUDGE_MODEL` | `gpt-4o-mini` | Model used for LLM-as-judge evaluation |
+| `GIT_PROVIDER` | `github` | Git provider: `github`, `bitbucket_server`, or `gitlab` |
+| `GIT_TOKEN` | -- | Fine-grained PAT or access token for auto-PR |
+| `GIT_REPO` | -- | Target repository (e.g., `your-org/your-repo`) |
+| `GIT_BASE_BRANCH` | `main` | Branch to target for pull requests |
+
+<Callout type="info">
+  The `GIT_*` variables are only required if you want auto-PR functionality.
+  Kaizen works without them -- you can manually activate optimized prompts.
+</Callout>
+
+### Start the stack
+
+```bash
+# With Podman
+podman-compose up -d
+
+# Or with Docker
+docker compose up -d
+```
+
+This starts the following services:
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| **api** | 8000 | FastAPI REST API |
+| **dashboard** | 3000 | Web UI for monitoring jobs, scores, and prompts |
+| **docs** | 4000 | Documentation site (this site) |
+| **flower** | 5555 | Celery task monitoring dashboard |
+| **postgres** | 5432 | Persistent storage for tasks, feedback, prompts, jobs |
+| **redis** | 6379 | Prompt cache, Celery broker, and auto-trigger dedup lock |
+| **worker** | -- | Celery worker running DSPy optimization |
+
+### Create your first API key
+
+Bootstrap an API key using the one-time bootstrap endpoint:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/keys/bootstrap \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "dev-key"}'
+```
+
+The response contains your API key:
+
+```json
+{
+  "id": "uuid-here",
+  "name": "dev-key",
+  "key": "kaizen_abc123...",
+  "created_at": "2026-01-01T00:00:00Z"
+}
+```
+
+<Callout type="warning">
+  Save the `key` value immediately -- it is only shown once. The API stores a
+  SHA-256 hash and cannot recover the plaintext. The bootstrap endpoint
+  auto-disables after the first key is created.
+</Callout>
+
+### Verify the deployment
+
+Check that the API is running:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected response:
+
+```json
+{"status": "ok"}
+```
+
+You can also verify the dashboard at [http://localhost:3000](http://localhost:3000) and the docs at [http://localhost:4000](http://localhost:4000).
+
+</Steps>
+
+## Environment variable reference
+
+For a complete list of configuration options, see the table below:
+
+| Category | Variable | Default | Description |
+|----------|----------|---------|-------------|
+| **Database** | `DATABASE_URL` | `postgresql+psycopg://...` | PostgreSQL connection |
+| **Cache** | `REDIS_URL` | `redis://redis:6379/0` | Redis connection |
+| **Cache** | `PROMPT_CACHE_TTL` | `300` | Prompt cache TTL in seconds |
+| **LLM** | `OPENAI_API_KEY` | -- | LLM provider API key |
+| **LLM** | `OPENAI_API_BASE` | -- | Custom LLM endpoint URL |
+| **LLM** | `SSL_VERIFY` | `true` | Verify SSL for LLM calls |
+| **Optimization** | `TEACHER_MODEL` | `gpt-4o` | DSPy teacher model |
+| **Optimization** | `JUDGE_MODEL` | `gpt-4o-mini` | Evaluation judge model |
+| **Optimization** | `COST_BUDGET_DEFAULT` | `5.0` | USD budget per optimization run |
+| **Optimization** | `MAX_TRIALS_DEFAULT` | `15` | Maximum MIPROv2 trials |
+| **Optimization** | `LLM_TIMEOUT` | `120` | HTTP timeout for LLM calls (seconds) |
+| **Optimization** | `OPTIMIZATION_WALL_TIMEOUT` | `1800` | Wall-clock timeout (seconds) |
+| **Git** | `GIT_PROVIDER` | `github` | `github`, `bitbucket_server`, or `gitlab` |
+| **Git** | `GIT_BASE_URL` | -- | Base URL for self-hosted Git (e.g., Bitbucket Server) |
+| **Git** | `GIT_TOKEN` | -- | Access token for auto-PR |
+| **Git** | `GIT_PROJECT` | -- | Bitbucket Server project key |
+| **Git** | `GIT_REPO` | -- | Target repository |
+| **Git** | `GIT_BASE_BRANCH` | `main` | PR target branch |
+| **Limits** | `FEEDBACK_RETENTION_LIMIT` | `1000` | Max feedback entries per task |
+| **Limits** | `SEED_SIZE_LIMIT` | `1000` | Max seed entries per upload |
+
+## Next steps
+
+- [Quick Start](/getting-started/quick-start) -- Install the SDK and log your first feedback
+- [Architecture](/getting-started/architecture) -- Understand the system components

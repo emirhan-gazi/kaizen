@@ -1,0 +1,139 @@
+# Quick Start
+
+Get from zero to your first prompt optimization in under 5 minutes.
+
+import { Callout, Tabs, Steps } from 'nextra/components'
+
+<Steps>
+
+### Install the SDK
+
+```bash
+pip install kaizen-sdk
+```
+
+### Configure your environment
+
+The SDK reads two environment variables. Set them via `export` or a `.env` file:
+
+<Tabs items={['Environment Variables', '.env File']}>
+  <Tabs.Tab>
+  ```bash
+  export KAIZEN_API_KEY="kaizen_your-api-key"
+  export KAIZEN_BASE_URL="http://localhost:8000"
+  ```
+  </Tabs.Tab>
+  <Tabs.Tab>
+  ```env
+  KAIZEN_API_KEY=kaizen_your-api-key
+  KAIZEN_BASE_URL=http://localhost:8000
+  ```
+  </Tabs.Tab>
+</Tabs>
+
+You can also pass these directly to the client constructor:
+
+```python
+from kaizen_sdk import CTClient
+
+client = CTClient(api_key="kaizen_...", base_url="http://localhost:8000")
+```
+
+### Create a task and log feedback
+
+A **task** represents a named unit of work in your LLM application (e.g., "summarize_ticket"). Once created, log feedback entries that pair inputs, outputs, and quality scores.
+
+<Tabs items={['Sync', 'Async']}>
+  <Tabs.Tab>
+  ```python
+  from kaizen_sdk import CTClient
+
+  client = CTClient()
+
+  # Create a task
+  task = client.create_task(
+      name="summarize_ticket",
+      description="Summarize support tickets into one paragraph",
+      feedback_threshold=50
+  )
+
+  # Log feedback from your application
+  result = client.log_feedback(
+      task_id=task.id,
+      inputs={"text": "Server is down, users cannot log in..."},
+      output="The server is experiencing an outage affecting user authentication.",
+      score=0.85,
+      source="sdk"
+  )
+  ```
+  </Tabs.Tab>
+  <Tabs.Tab>
+  ```python
+  from kaizen_sdk import AsyncCTClient
+
+  async with AsyncCTClient() as client:
+      # Create a task
+      task = await client.create_task(
+          name="summarize_ticket",
+          description="Summarize support tickets into one paragraph",
+          feedback_threshold=50
+      )
+
+      # Log feedback from your application
+      result = await client.log_feedback(
+          task_id=task.id,
+          inputs={"text": "Server is down, users cannot log in..."},
+          output="The server is experiencing an outage affecting user authentication.",
+          score=0.85,
+          source="sdk"
+      )
+  ```
+  </Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+  Auto-optimization triggers after 50 feedback entries by default. You can configure
+  this per task via the `feedback_threshold` parameter when creating a task.
+</Callout>
+
+### Check your progress
+
+List your tasks to see how close each one is to the optimization threshold:
+
+```python
+tasks = client.list_tasks()
+for t in tasks:
+    print(f"{t.name}: {t.feedback_count}/{t.feedback_threshold} "
+          f"({t.threshold_progress:.0%} to optimization)")
+```
+
+### Get your optimized prompt
+
+Once optimization completes, retrieve the active prompt for your task:
+
+```python
+prompt = client.get_prompt("summarize_ticket")
+print(prompt.prompt_text)
+print(f"Eval score: {prompt.eval_score}")
+print(f"Version: {prompt.version_number}")
+```
+
+The prompt is cached locally for 5 minutes (configurable via `cache_ttl`). After a new optimization completes and is activated, the SDK automatically picks up the new version.
+
+</Steps>
+
+## What happens under the hood
+
+When your feedback count reaches the threshold:
+
+1. A Celery worker picks up the optimization job
+2. DSPy MIPROv2 runs with your feedback data (20/80 train/validation split)
+3. The best prompt is saved as a **draft** version
+4. An auto-PR is created in your Git repository with before/after scores
+5. You review and merge the PR, or activate the prompt via the API
+
+## Next steps
+
+- [Self-Hosting](/getting-started/self-hosting) -- Deploy the full Kaizen stack
+- [Architecture](/getting-started/architecture) -- Understand how the components fit together
+- [Concepts](/getting-started/concepts) -- Learn the core terminology

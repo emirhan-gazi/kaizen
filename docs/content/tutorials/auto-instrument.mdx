@@ -1,0 +1,201 @@
+import { Steps, Callout, Tabs } from 'nextra/components'
+
+# Zero-Config with Auto-Instrument
+
+Auto-instrument patches your LLM library at the function level — no manual trace calls required. Every LLM call is automatically captured, stored in CT, and made available for scoring and optimization.
+
+---
+
+<Steps>
+
+### Install the SDK
+
+```bash
+pip install kaizen-sdk
+```
+
+Set your environment variables:
+
+```bash
+export KAIZEN_API_KEY=your_api_key
+export KAIZEN_BASE_URL=http://localhost:8000  # or your CT server URL
+```
+
+### Level 1 — Zero Config
+
+Call `instrument()` once at startup with your LLM library. All calls made through that library are automatically traced:
+
+<Tabs items={['litellm', 'openai']}>
+  <Tabs.Tab>
+```python
+from kaizen_sdk import instrument
+import litellm
+
+# Patch litellm — do this once at app startup
+instrument(litellm)
+
+# From here, every litellm.completion() call is traced
+result = litellm.completion(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Summarize: server is down"}],
+)
+
+# Access the trace ID attached to the result
+print(result.ct_trace_id)   # e.g. "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+```
+  </Tabs.Tab>
+  <Tabs.Tab>
+```python
+from kaizen_sdk import instrument
+import openai
+
+# Patch the openai module — do this once at app startup
+instrument(openai)
+
+client = openai.OpenAI()
+result = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Summarize: server is down"}],
+)
+
+print(result.ct_trace_id)
+```
+  </Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+  `instrument()` is idempotent — calling it multiple times on the same library does not double-patch. It's safe to call in application factories or module-level init code.
+</Callout>
+
+### Score traces
+
+After you have a result with `ct_trace_id`, score it directly on the result object or via the client:
+
+```python
+# Option 1: shorthand on the result object
+result.ct_score(0.9)                    # score = 0.9 (excellent)
+result.ct_score(0.3)                    # score = 0.3 (poor)
+
+# Option 2: via CTClient (for delayed scoring, e.g. after user rates the output)
+from kaizen_sdk import CTClient
+
+ct = CTClient()
+ct.score(result.ct_trace_id, score=0.9)
+```
+
+Scored traces are stored and feed into the optimization dataset alongside manually logged feedback.
+
+<Callout type="tip">
+  You don't need to score every trace. Score when you have a signal — user thumbs up/down, downstream validation, A/B test result. Unscored traces are stored but not used in optimization.
+</Callout>
+
+### Level 2 — Task Mapping
+
+In Level 1, every traced call maps to a generic `"unknown"` task. Use `task_map` to route calls to named CT tasks:
+
+```python
+from kaizen_sdk import instrument
+import litellm
+
+instrument(
+    litellm,
+    task_map={
+        "SUMMARIZE_PROMPT": "summarize_ticket",    # variable name → task name
+        "CLASSIFY_INTENT": "classify_intent",
+    },
+)
+```
+
+CT uses static analysis to detect which variable in your source code holds the prompt passed to each LLM call. When the variable name matches a key in `task_map`, the trace is attributed to that task.
+
+**Example source code that triggers the mapping:**
+
+```python
+SUMMARIZE_PROMPT = "Summarize the following support ticket concisely."
+
+def summarize(text: str) -> str:
+    return litellm.completion(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": SUMMARIZE_PROMPT},  # detected → "summarize_ticket"
+            {"role": "user", "content": text},
+        ],
+    ).choices[0].message.content
+```
+
+### Ignore unmapped calls
+
+If `task_map` is set and you only want to trace calls that match a mapped task, use `ignore_unmapped=True`:
+
+```python
+instrument(
+    litellm,
+    task_map={
+        "SUMMARIZE_PROMPT": "summarize_ticket",
+    },
+    ignore_unmapped=True,   # skip all calls that don't match task_map
+)
+```
+
+This prevents unrelated LLM calls in your app from generating noise in the CT trace log.
+
+</Steps>
+
+---
+
+## Supported Libraries
+
+| Library | Support level | Patched functions |
+|---------|--------------|------------------|
+| `litellm` | ✅ Full | `litellm.completion`, `litellm.acompletion` |
+| `openai` | ✅ Full | `openai.resources.chat.completions.Completions.create` |
+| `langchain` | ⚠️ Experimental | `BaseLLM._generate`, `BaseChatModel._generate` |
+
+<Callout type="warning">
+  LangChain support is experimental. Internal LangChain APIs change frequently. Pin your LangChain version when using CT auto-instrumentation.
+</Callout>
+
+---
+
+## Async Support
+
+`instrument()` patches both sync and async variants:
+
+```python
+from kaizen_sdk import instrument
+import litellm
+
+instrument(litellm)
+
+# Async calls are automatically traced too
+async def summarize_async(text: str) -> str:
+    result = await litellm.acompletion(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": text}],
+    )
+    # ct_trace_id and ct_score are available on async results too
+    result.ct_score(0.8)
+    return result.choices[0].message.content
+```
+
+---
+
+## Configuration Options
+
+`instrument()` accepts these arguments:
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `library` | module | required | LLM library to patch (`litellm`, `openai`, `langchain`) |
+| `task_map` | `dict[str, str]` | `None` | Maps source variable names to CT task names |
+| `ignore_unmapped` | `bool` | `False` | Skip traces for prompts not in `task_map` |
+| `api_key` | `str` | `KAIZEN_API_KEY` env | Override API key |
+| `base_url` | `str` | `KAIZEN_BASE_URL` env | Override CT server URL |
+
+---
+
+## Next Steps
+
+- **Manually log feedback:** [Integrate with an Existing App](/tutorials/integrate-existing-app) shows `log_feedback()` for explicit scoring
+- **Custom evaluators:** [Custom Evaluators](/tutorials/custom-evaluators) for controlling how CT judges prompts
+- **API reference:** [Traces](/api/traces) endpoint documentation

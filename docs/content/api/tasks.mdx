@@ -1,0 +1,262 @@
+import { Callout } from 'nextra/components'
+
+# Tasks
+
+Tasks are the top-level resource in Kaizen. A task represents one LLM workflow
+you want to optimize — for example, a summarization prompt or a classification chain.
+Each task tracks its feedback threshold, active prompt, and optimization history.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/tasks` | Create a task |
+| `GET` | `/api/v1/tasks` | List all tasks |
+| `GET` | `/api/v1/tasks/\{task_id\}` | Get a single task |
+| `POST` | `/api/v1/tasks/\{task_id\}/seed` | Upload a seed dataset |
+
+---
+
+## POST /api/v1/tasks
+
+Create a new task. Task names must be unique.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | ✅ | Unique task name (1–255 chars) |
+| `description` | string | — | Human-readable description |
+| `schema_json` | object | — | JSON object defining expected input fields. If set, feedback inputs are validated against these keys. |
+| `feedback_threshold` | integer | — | Number of live feedback entries that trigger auto-optimization (default: `50`, min: `1`) |
+| `feedback_retention_limit` | integer | — | Max feedback entries to retain (default: `1000`) |
+| `evaluator_config` | object | — | Custom evaluator configuration dict |
+| `teacher_model` | string | — | LLM model to use as teacher during optimization (overrides server default) |
+| `judge_model` | string | — | LLM model to use as judge/evaluator (overrides server default) |
+| `module_type` | string | — | DSPy module type: `"predict"` or `"chain_of_thought"` (default: `"predict"`) |
+| `cost_budget` | float | — | Maximum allowed optimization cost in USD |
+| `git_provider` | string | — | Git provider: `"github"`, `"bitbucket_server"`, or `"gitlab"` |
+| `git_base_url` | string | — | Git server base URL (for self-hosted providers) |
+| `git_token_raw` | string | — | Personal access token for Git operations (stored encrypted) |
+| `git_project` | string | — | Git project/namespace (Bitbucket/GitLab) |
+| `git_repo` | string | — | Repository slug or path |
+| `git_base_branch` | string | — | Base branch for PRs (e.g., `"main"`) |
+| `prompt_path` | string | — | Path to the prompt file in the repository |
+| `prompt_format` | string | — | Prompt file format: `"json"`, `"text"`, or `"yaml"` |
+| `feedback_source` | string | — | Feedback source mode: `"sdk"` or `"traces"` (default: `"sdk"`) |
+| `auto_eval` | boolean | — | Enable automatic evaluation on feedback (default: `false`) |
+
+### Example Request
+
+```bash
+curl -X POST http://localhost:8000/api/v1/tasks \
+  -H "X-API-Key: kaizen_abc123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "summarize_ticket",
+    "description": "Summarizes support tickets for faster triage",
+    "schema_json": {"ticket_text": "string", "priority": "string"},
+    "feedback_threshold": 50,
+    "github_repo": "myorg/myrepo",
+    "github_base_branch": "main",
+    "github_token_raw": "ghp_...",
+    "prompt_path": "prompts/summarize.txt",
+    "prompt_format": "text"
+  }'
+```
+
+### Response — 201 Created
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "summarize_ticket",
+  "description": "Summarizes support tickets for faster triage",
+  "schema_json": {"ticket_text": "string", "priority": "string"},
+  "feedback_threshold": 50,
+  "feedback_retention_limit": 1000,
+  "evaluator_config": null,
+  "teacher_model": null,
+  "judge_model": null,
+  "module_type": "predict",
+  "cost_budget": null,
+  "git_provider": null,
+  "git_repo": null,
+  "git_base_branch": null,
+  "prompt_path": "prompts/summarize.txt",
+  "prompt_format": "text",
+  "feedback_source": "sdk",
+  "auto_eval": false,
+  "github_repo": "myorg/myrepo",
+  "github_base_branch": "main",
+  "created_at": "2024-01-15T10:30:00Z",
+  "feedback_count": 0,
+  "last_optimization": null,
+  "active_prompt_score": null,
+  "threshold_progress": "0/50"
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+| `409` | A task with this `name` already exists |
+| `422` | Validation error (e.g., `name` is empty, invalid `module_type`) |
+
+---
+
+## GET /api/v1/tasks
+
+List all tasks with live feedback counts and prompt scores. Uses cursor-based pagination.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cursor` | datetime (ISO 8601) | `created_at` of the last item from the previous page |
+| `limit` | integer | Number of results (default: `50`, min: `1`, max: `200`) |
+
+### Example Request
+
+```bash
+curl -H "X-API-Key: kaizen_abc123" \
+  "http://localhost:8000/api/v1/tasks?limit=20"
+```
+
+### Response — 200 OK
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "summarize_ticket",
+    "description": "Summarizes support tickets for faster triage",
+    "schema_json": {"ticket_text": "string", "priority": "string"},
+    "feedback_threshold": 50,
+    "feedback_retention_limit": 1000,
+    "module_type": "predict",
+    "prompt_path": "prompts/summarize.txt",
+    "prompt_format": "text",
+    "created_at": "2024-01-15T10:30:00Z",
+    "feedback_count": 23,
+    "last_optimization": null,
+    "active_prompt_score": null,
+    "threshold_progress": "23/50"
+  }
+]
+```
+
+<Callout>
+Seed feedback (submitted with `source: "seed"`) does **not** count toward `feedback_count`
+or `threshold_progress`. Only live feedback from the SDK is included.
+</Callout>
+
+---
+
+## GET /api/v1/tasks/\{task_id\}
+
+Get a single task by its UUID.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `task_id` | UUID | The task's unique identifier |
+
+### Example Request
+
+```bash
+curl -H "X-API-Key: kaizen_abc123" \
+  "http://localhost:8000/api/v1/tasks/550e8400-e29b-41d4-a716-446655440000"
+```
+
+### Response — 200 OK
+
+Returns a single [TaskSummary object](#post-apiv1tasks) — same shape as the list response.
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing or invalid API key |
+| `404` | Task not found |
+
+---
+
+## POST /api/v1/tasks/\{task_id\}/seed
+
+Upload a JSONL seed dataset to bootstrap a cold-start task. Seeds provide initial
+training examples before any live feedback arrives. They are stored with `source: "seed"`
+and do **not** count toward the auto-trigger threshold.
+
+**Authentication:** Required (`X-API-Key`)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `task_id` | UUID | The task's unique identifier |
+
+### Request Body
+
+Multipart form upload. Send a `.jsonl` file where each line is a JSON object with:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `inputs` | object | — | Input fields matching the task's `schema_json` |
+| `output` | string | — | The LLM output for this example |
+| `score` | float | — | Quality score between `0.0` and `1.0` |
+
+**Example JSONL file (`seeds.jsonl`):**
+
+```jsonl
+{"inputs": {"ticket_text": "Login fails on Safari", "priority": "high"}, "output": "Authentication issue on Safari browser", "score": 0.9}
+{"inputs": {"ticket_text": "Dark mode not working", "priority": "low"}, "output": "UI theme preference not persisting", "score": 0.85}
+```
+
+### Example Request
+
+```bash
+curl -X POST http://localhost:8000/api/v1/tasks/550e8400-e29b-41d4-a716-446655440000/seed \
+  -H "X-API-Key: kaizen_abc123" \
+  -F "file=@seeds.jsonl"
+```
+
+### Response — 201 Created
+
+```json
+{
+  "accepted": 2,
+  "rejected": 0,
+  "errors": [],
+  "total_seeds": 2,
+  "seed_limit": 500
+}
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `accepted` | integer | Number of seed entries successfully stored |
+| `rejected` | integer | Number of lines that failed validation |
+| `errors` | array | Up to 20 error messages with line numbers |
+| `total_seeds` | integer | Total seed entries for this task after upload |
+| `seed_limit` | integer | Maximum allowed seeds per task |
+
+### Error Cases
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Empty file, non-UTF-8 encoding, or seed limit already reached |
+| `401` | Missing or invalid API key |
+| `404` | Task not found |
+| `422` | No valid seed entries found (all lines had validation errors) |

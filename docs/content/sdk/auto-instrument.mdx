@@ -1,0 +1,206 @@
+import { Callout } from 'nextra/components'
+
+# Auto-Instrument
+
+**Zero-config LLM tracing for Kaizen.**
+
+The `instrument()` function monkey-patches your LLM library to automatically capture traces — prompt text, response, model, token count, latency — and send them to the CT server. No code changes needed around individual LLM calls.
+
+All patches are **idempotent**: calling `instrument()` twice on the same library has no effect.
+
+---
+
+## instrument()
+
+```python
+from kaizen_sdk import instrument
+
+instrument(
+    library,
+    *,
+    task_map: dict[str, str] | None = None,
+    ignore_unmapped: bool = False,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> None
+```
+
+### Parameters
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `library` | module | required | The LLM library module to patch. Supported: `litellm`, `openai`, `langchain`. |
+| `task_map` | `dict[str, str] \| None` | `None` | Level 2 mapping from prompt variable names to CT task names. When `None`, task names are auto-detected from calling code (Level 1). |
+| `ignore_unmapped` | `bool` | `False` | When `True` and `task_map` is set, skip tracing for prompts whose variable name is not in `task_map`. |
+| `api_key` | `str \| None` | `None` | CT API key. Falls back to `KAIZEN_API_KEY` env var. |
+| `base_url` | `str \| None` | `None` | CT API base URL. Falls back to `KAIZEN_BASE_URL` env var, then `http://localhost:8000`. |
+
+### Returns
+
+`None`. The library is patched in-place.
+
+---
+
+## Level 1: Zero-Config Auto-Detection
+
+Level 1 requires no configuration. Call `instrument()` once at startup and CT automatically detects the task name from the variable name holding the prompt in your source code.
+
+```python
+from kaizen_sdk import instrument
+import litellm
+
+# Patch at startup — do this once, before any LLM calls
+instrument(litellm)
+
+# Later in your code, the variable name (SUMMARIZE_PROMPT) is used as the task name
+SUMMARIZE_PROMPT = "Summarize the following ticket in one sentence: {ticket}"
+
+response = litellm.completion(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": SUMMARIZE_PROMPT.format(ticket=ticket_text)}],
+)
+
+# Access the trace ID attached to the response
+print(response.ct_trace_id)
+
+# Score the trace inline
+response.ct_score(0.9)
+```
+
+<Callout type="info">
+CT detects the source variable by inspecting the call stack at the point of the LLM call. The variable name becomes the task name in the CT dashboard.
+</Callout>
+
+---
+
+## Level 2: Named Task Mapping
+
+Level 2 gives you explicit control over which prompts map to which CT tasks. Pass a `task_map` dict mapping your prompt variable names to CT task names.
+
+```python
+from kaizen_sdk import instrument
+import litellm
+
+instrument(
+    litellm,
+    task_map={
+        "SUMMARIZE_PROMPT": "summarize_ticket",
+        "CLASSIFY_PROMPT": "classify_intent",
+    },
+)
+
+SUMMARIZE_PROMPT = "Summarize the following: {text}"
+CLASSIFY_PROMPT = "Classify the intent of: {message}"
+
+# This call maps to the "summarize_ticket" CT task
+response = litellm.completion(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": SUMMARIZE_PROMPT.format(text=doc)}],
+)
+```
+
+### Ignoring Unmapped Prompts
+
+Set `ignore_unmapped=True` to skip tracing for any prompt whose variable name is not in `task_map`:
+
+```python
+instrument(
+    litellm,
+    task_map={"SUMMARIZE_PROMPT": "summarize_ticket"},
+    ignore_unmapped=True,  # Only trace SUMMARIZE_PROMPT, skip everything else
+)
+```
+
+---
+
+## Supported Libraries
+
+| Library | Patched Functions | Notes |
+|---------|-------------------|-------|
+| `litellm` | `litellm.completion`, `litellm.acompletion` | Both sync and async are patched |
+| `openai` | `openai.resources.chat.completions.Completions.create` | Sync only |
+| `langchain` | `BaseLLM._generate`, `BaseChatModel._generate` | Requires langchain package installed |
+
+### litellm (recommended)
+
+```python
+import litellm
+from kaizen_sdk import instrument
+
+instrument(litellm)
+```
+
+### openai
+
+```python
+import openai
+from kaizen_sdk import instrument
+
+instrument(openai)
+client = openai.OpenAI()
+```
+
+### langchain
+
+```python
+import langchain
+from kaizen_sdk import instrument
+
+instrument(langchain)
+```
+
+---
+
+## Trace Result Helpers
+
+After an instrumented LLM call, the result object gains two extra attributes:
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `result.ct_trace_id` | `str` | UUID of the captured trace. Use this to score the trace later. |
+| `result.ct_score(score, scored_by="sdk")` | callable | Inline helper to score the trace immediately. |
+
+### Scoring Inline
+
+```python
+response = litellm.completion(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": SUMMARIZE_PROMPT}],
+)
+
+# Score immediately after evaluating quality
+if is_good_response(response.choices[0].message.content):
+    response.ct_score(1.0)
+else:
+    response.ct_score(0.0)
+```
+
+### Scoring Later via CTClient
+
+```python
+from kaizen_sdk import CTClient
+
+trace_id = response.ct_trace_id  # Save for later
+
+# Score asynchronously (e.g. after human review)
+with CTClient() as client:
+    client.score(trace_id=trace_id, score=0.85, scored_by="human")
+```
+
+---
+
+## Configuration
+
+`instrument()` reads `KAIZEN_API_KEY` and `KAIZEN_BASE_URL` from the environment by default. You can override them explicitly:
+
+```python
+instrument(
+    litellm,
+    api_key="sk-my-key",
+    base_url="https://ct.my-company.com",
+)
+```
+
+<Callout type="warning">
+If `KAIZEN_API_KEY` is not set and `api_key` is not passed, traces are silently dropped with a warning logged to `kaizen_sdk.instrument`. No exception is raised — LLM calls continue normally.
+</Callout>

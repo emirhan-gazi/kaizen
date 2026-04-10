@@ -1,0 +1,286 @@
+import { Steps, Tabs, Callout } from 'nextra/components'
+
+# Integrate with an Existing LLM App
+
+This tutorial walks you through adding Kaizen to a Python application that already uses an LLM. You'll install the SDK, create a task, log feedback after each LLM call, and retrieve the optimized prompt once enough feedback has accumulated.
+
+**Prerequisites:**
+- A running CT server (`podman-compose up` or Docker Compose)
+- `KAIZEN_API_KEY` and `KAIZEN_BASE_URL` available
+- An existing Python app making LLM calls (we'll use `litellm` as the example)
+
+---
+
+## Scenario
+
+You have a support-ticket summarization function:
+
+```python
+import litellm
+
+def summarize_ticket(text: str) -> str:
+    response = litellm.completion(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Summarize the following support ticket concisely."},
+            {"role": "user", "content": text},
+        ],
+    )
+    return response.choices[0].message.content
+```
+
+You want CT to automatically optimize the system prompt based on user feedback.
+
+---
+
+<Steps>
+
+### Install the SDK
+
+```bash
+pip install kaizen-sdk
+```
+
+### Initialize the client
+
+Create a client once (at app startup) using environment variables:
+
+<Tabs items={['Sync', 'Async']}>
+  <Tabs.Tab>
+```python
+import os
+from kaizen_sdk import CTClient
+
+client = CTClient(
+    api_key=os.environ["KAIZEN_API_KEY"],
+    base_url=os.environ.get("KAIZEN_BASE_URL", "http://localhost:8000"),
+)
+```
+  </Tabs.Tab>
+  <Tabs.Tab>
+```python
+import os
+from kaizen_sdk import AsyncCTClient
+
+client = AsyncCTClient(
+    api_key=os.environ["KAIZEN_API_KEY"],
+    base_url=os.environ.get("KAIZEN_BASE_URL", "http://localhost:8000"),
+)
+```
+  </Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+  Both `KAIZEN_API_KEY` and `KAIZEN_BASE_URL` can be set as environment variables. The constructor arguments are optional if the env vars are present.
+</Callout>
+
+### Create a task
+
+A **task** represents a specific LLM job in your application. Create it once during setup:
+
+<Tabs items={['Sync', 'Async']}>
+  <Tabs.Tab>
+```python
+task = client.create_task(
+    name="summarize_ticket",
+    description="Summarize support tickets into one or two sentences",
+    feedback_threshold=50,  # trigger optimization after 50 feedback entries
+)
+task_id = str(task.id)
+print(f"Created task: {task.name} ({task_id})")
+```
+  </Tabs.Tab>
+  <Tabs.Tab>
+```python
+task = await client.create_task(
+    name="summarize_ticket",
+    description="Summarize support tickets into one or two sentences",
+    feedback_threshold=50,
+)
+task_id = str(task.id)
+print(f"Created task: {task.name} ({task_id})")
+```
+  </Tabs.Tab>
+</Tabs>
+
+<Callout type="tip">
+  Store `task.id` in your configuration or database — you'll reference it every time you log feedback or retrieve prompts.
+</Callout>
+
+### Log feedback after each LLM call
+
+**Before CT** — a plain LLM call with no feedback:
+
+```python
+def summarize_ticket(text: str) -> str:
+    response = litellm.completion(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Summarize the following support ticket concisely."},
+            {"role": "user", "content": text},
+        ],
+    )
+    return response.choices[0].message.content
+```
+
+**After CT** — log feedback with a score from your rating system:
+
+<Tabs items={['Sync', 'Async']}>
+  <Tabs.Tab>
+```python
+from kaizen_sdk import CTClient
+
+def summarize_ticket(text: str, user_rating: float | None = None) -> str:
+    response = litellm.completion(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Summarize the following support ticket concisely."},
+            {"role": "user", "content": text},
+        ],
+    )
+    summary = response.choices[0].message.content
+
+    # Log feedback — score is optional, add it when users rate the output
+    client.log_feedback(
+        task_id=task_id,
+        inputs={"text": text},
+        output=summary,
+        score=user_rating,  # 0.0–1.0 or None for unlabeled
+        source="app",
+    )
+
+    return summary
+```
+  </Tabs.Tab>
+  <Tabs.Tab>
+```python
+from kaizen_sdk import AsyncCTClient
+
+async def summarize_ticket(text: str, user_rating: float | None = None) -> str:
+    response = await litellm.acompletion(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Summarize the following support ticket concisely."},
+            {"role": "user", "content": text},
+        ],
+    )
+    summary = response.choices[0].message.content
+
+    await client.log_feedback(
+        task_id=task_id,
+        inputs={"text": text},
+        output=summary,
+        score=user_rating,
+        source="app",
+    )
+
+    return summary
+```
+  </Tabs.Tab>
+</Tabs>
+
+### Retrieve the optimized prompt
+
+Once optimization runs, replace the hardcoded system prompt with the one CT generated:
+
+<Tabs items={['Sync', 'Async']}>
+  <Tabs.Tab>
+```python
+def summarize_ticket(text: str, user_rating: float | None = None) -> str:
+    # Retrieve the active (optimized) prompt — cached in memory for 5 minutes
+    prompt_obj = client.get_prompt(task_id)
+    system_prompt = prompt_obj.prompt_text or "Summarize the following support ticket concisely."
+
+    response = litellm.completion(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text},
+        ],
+    )
+    summary = response.choices[0].message.content
+
+    client.log_feedback(
+        task_id=task_id,
+        inputs={"text": text},
+        output=summary,
+        score=user_rating,
+    )
+
+    return summary
+```
+  </Tabs.Tab>
+  <Tabs.Tab>
+```python
+async def summarize_ticket(text: str, user_rating: float | None = None) -> str:
+    prompt_obj = await client.get_prompt(task_id)
+    system_prompt = prompt_obj.prompt_text or "Summarize the following support ticket concisely."
+
+    response = await litellm.acompletion(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text},
+        ],
+    )
+    summary = response.choices[0].message.content
+
+    await client.log_feedback(
+        task_id=task_id,
+        inputs={"text": text},
+        output=summary,
+        score=user_rating,
+    )
+
+    return summary
+```
+  </Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+  `get_prompt()` returns the active prompt version from a local TTL cache (default: 5 minutes). On first call or cache miss, it fetches from the CT API. If no optimization has run yet, `prompt_text` may be `None` — always provide a fallback.
+</Callout>
+
+### Monitor progress
+
+Check how close you are to the optimization threshold:
+
+<Tabs items={['Sync', 'Async']}>
+  <Tabs.Tab>
+```python
+tasks = client.list_tasks()
+for t in tasks:
+    print(f"{t.name}: {t.threshold_progress} feedback entries")
+    if t.last_optimization:
+        print(f"  Last optimized: {t.last_optimization}")
+        print(f"  Active prompt score: {t.active_prompt_score:.2%}")
+```
+  </Tabs.Tab>
+  <Tabs.Tab>
+```python
+tasks = await client.list_tasks()
+for t in tasks:
+    print(f"{t.name}: {t.threshold_progress} feedback entries")
+    if t.last_optimization:
+        print(f"  Last optimized: {t.last_optimization}")
+        print(f"  Active prompt score: {t.active_prompt_score:.2%}")
+```
+  </Tabs.Tab>
+</Tabs>
+
+Example output:
+```
+summarize_ticket: 37/50 feedback entries
+```
+
+Once the count reaches the threshold (50 in this example), CT automatically triggers an optimization job.
+
+</Steps>
+
+---
+
+## Next Steps
+
+- **Speed up the first optimization:** [Seed historical data](/tutorials/seed-data) to bootstrap without waiting for production traffic
+- **Set up auto-PR:** Have optimized prompts delivered as a GitHub or Bitbucket PR — see [Auto-PR with GitHub](/tutorials/auto-pr-github) or [Auto-PR with Bitbucket Server](/tutorials/auto-pr-bitbucket)
+- **Custom evaluators:** Tune how CT judges prompt quality — see [Custom Evaluators](/tutorials/custom-evaluators)

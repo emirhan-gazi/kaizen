@@ -1,0 +1,197 @@
+import { Callout } from 'nextra/components'
+
+# Exceptions
+
+**Exception hierarchy for the CT SDK.**
+
+All CT SDK exceptions inherit from `CTError`. The SDK maps HTTP status codes from the API to typed Python exceptions, so you can catch specific error conditions precisely.
+
+```python
+from kaizen_sdk.exceptions import CTError, CTAuthError, CTNotFoundError, CTValidationError, CTServerError
+```
+
+---
+
+## Exception Hierarchy
+
+```
+CTError (base)
+├── CTAuthError        (HTTP 401 Unauthorized)
+├── CTNotFoundError    (HTTP 404 Not Found)
+├── CTValidationError  (HTTP 422 Unprocessable Entity)
+└── CTServerError      (HTTP 5xx Server Error)
+```
+
+All exceptions carry three attributes:
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `message` | `str` | Human-readable error message (from `str(exc)`). |
+| `status_code` | `int \| None` | HTTP status code from the API response, or `None` for client-side errors. |
+| `detail` | `str \| None` | Detail field from RFC 7807 ProblemDetail response body, if present. |
+
+---
+
+## CTError
+
+Base exception for all CT SDK errors. Raised when no more specific exception applies (e.g. unexpected 4xx status codes).
+
+```python
+class CTError(Exception):
+    def __init__(self, message: str, status_code: int | None = None, detail: str | None = None): ...
+```
+
+Also raised client-side for configuration errors (missing API key):
+
+```python
+try:
+    client = CTClient()  # raises CTError if KAIZEN_API_KEY is not set
+except CTError as e:
+    print(f"Configuration error: {e}")
+```
+
+---
+
+## CTAuthError
+
+Raised when the API returns **HTTP 401 Unauthorized**. Indicates an invalid or missing API key.
+
+```python
+from kaizen_sdk import CTClient
+from kaizen_sdk.exceptions import CTAuthError
+
+try:
+    with CTClient(api_key="invalid-key") as client:
+        tasks = client.list_tasks()
+except CTAuthError as e:
+    print(f"Authentication failed (HTTP {e.status_code}): {e}")
+    # Refresh your KAIZEN_API_KEY and retry
+```
+
+---
+
+## CTNotFoundError
+
+Raised when the API returns **HTTP 404 Not Found**. Indicates the requested resource does not exist.
+
+```python
+from kaizen_sdk.exceptions import CTNotFoundError
+
+try:
+    with CTClient() as client:
+        prompt = client.get_prompt("nonexistent-task-id")
+except CTNotFoundError as e:
+    print(f"Task not found (HTTP {e.status_code}): {e}")
+    # Check the task_id is correct
+```
+
+---
+
+## CTValidationError
+
+Raised when the API returns **HTTP 422 Unprocessable Entity**. Indicates invalid request parameters.
+
+```python
+from kaizen_sdk.exceptions import CTValidationError
+
+try:
+    with CTClient() as client:
+        result = client.log_feedback(
+            task_id="invalid-uuid-format",
+            score=99.0,  # out of range
+        )
+except CTValidationError as e:
+    print(f"Validation failed (HTTP {e.status_code}): {e}")
+    if e.detail:
+        print(f"Detail: {e.detail}")
+```
+
+---
+
+## CTServerError
+
+Raised when the API returns **HTTP 5xx** status. Indicates a server-side error.
+
+```python
+from kaizen_sdk.exceptions import CTServerError
+
+try:
+    with CTClient() as client:
+        result = client.trigger_optimization(task_id)
+except CTServerError as e:
+    print(f"Server error (HTTP {e.status_code}): {e}")
+    # Consider retrying with backoff
+```
+
+---
+
+## Comprehensive Error Handling
+
+For production code, catch specific exceptions before the base `CTError`:
+
+```python
+from kaizen_sdk import CTClient
+from kaizen_sdk.exceptions import (
+    CTError,
+    CTAuthError,
+    CTNotFoundError,
+    CTValidationError,
+    CTServerError,
+)
+
+def log_with_retry(task_id: str, inputs: dict, output: str, score: float):
+    try:
+        with CTClient() as client:
+            result = client.log_feedback(
+                task_id=task_id,
+                inputs=inputs,
+                output=output,
+                score=score,
+            )
+            return result
+
+    except CTAuthError as e:
+        # API key is invalid — alert ops team
+        raise SystemExit(f"CT authentication failed: {e}") from e
+
+    except CTNotFoundError as e:
+        # Task doesn't exist — check configuration
+        print(f"Task {task_id!r} not found: {e}")
+        return None
+
+    except CTValidationError as e:
+        # Request data is invalid — log and skip
+        print(f"Validation error for task {task_id!r}: {e.detail}")
+        return None
+
+    except CTServerError as e:
+        # Server-side error — retry with backoff
+        print(f"CT server error (retrying): {e}")
+        raise
+
+    except CTError as e:
+        # Unexpected CT error
+        print(f"CT error: {e} (status={e.status_code})")
+        return None
+```
+
+<Callout type="warning">
+In high-volume production code, consider wrapping `log_feedback()` and `score()` calls in a `try/except CTError` to prevent CT errors from disrupting your main application flow. The CT SDK is a side-channel — it should never crash your primary service.
+</Callout>
+
+---
+
+## RFC 7807 Error Format
+
+The CT API uses [RFC 7807 Problem Details](https://datatracker.ietf.org/doc/html/rfc7807) for error responses:
+
+```json
+{
+  "type": "https://ct.example.com/errors/not-found",
+  "title": "Task not found",
+  "status": 404,
+  "detail": "No task with id '3b4e1f2a-...' exists."
+}
+```
+
+The SDK automatically parses the `detail` field and attaches it to the exception's `.detail` attribute.

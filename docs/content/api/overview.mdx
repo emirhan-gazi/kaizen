@@ -1,0 +1,175 @@
+import { Callout } from 'nextra/components'
+
+# API Overview
+
+The Kaizen REST API is a JSON-based HTTP API that provides programmatic access to all
+features: task management, feedback ingestion, prompt retrieval, optimization jobs, traces, and
+API key management.
+
+## Base URL
+
+All endpoints are served under the `/api/v1` prefix:
+
+```
+http://localhost:8000/api/v1
+```
+
+For production deployments, replace `localhost:8000` with your server's hostname.
+
+## Interactive Docs (Swagger UI)
+
+FastAPI's built-in interactive documentation is available at:
+
+```
+http://localhost:8000/docs
+```
+
+The Swagger UI lets you explore and test every endpoint directly from your browser.
+
+## Authentication
+
+All endpoints **except** `GET /health` require an `X-API-Key` header.
+
+```bash
+curl -H "X-API-Key: ct_your_key_here" http://localhost:8000/api/v1/tasks
+```
+
+API keys are prefixed with `kaizen_` and created via the [API Keys](/api/keys) endpoints.
+On first startup, a key is auto-generated and written to `.secrets/first-key.txt`.
+
+### Key Validation
+
+The server hashes each incoming key with SHA-256 and looks it up in the database. Keys that
+have been revoked (`revoked_at` is set) are rejected even if the hash matches.
+
+**Error response when key is missing or invalid:**
+
+```json
+{
+  "type": "about:blank",
+  "title": "Unauthorized",
+  "status": 401,
+  "detail": "Missing API key",
+  "instance": "/api/v1/tasks"
+}
+```
+
+## Error Format (RFC 7807)
+
+All API errors follow [RFC 7807 Problem Details](https://www.rfc-editor.org/rfc/rfc7807)
+and use the content type `application/problem+json`.
+
+### Error Object Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Error type URI (currently `"about:blank"`) |
+| `title` | string | Human-readable summary of the problem |
+| `status` | integer | HTTP status code |
+| `detail` | string | Specific explanation of what went wrong |
+| `instance` | string | The request path that produced the error |
+
+### Example Error Responses
+
+**404 Not Found:**
+
+```json
+{
+  "type": "about:blank",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "Task not found",
+  "instance": "/api/v1/tasks/550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**422 Validation Error:**
+
+```json
+{
+  "type": "about:blank",
+  "title": "Validation Error",
+  "status": 422,
+  "detail": "score must be between 0.0 and 1.0",
+  "instance": "/api/v1/feedback"
+}
+```
+
+**409 Conflict:**
+
+```json
+{
+  "type": "about:blank",
+  "title": "Conflict",
+  "status": 409,
+  "detail": "Active optimization job already exists for this task",
+  "instance": "/api/v1/optimize/550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**401 Unauthorized:**
+
+```json
+{
+  "type": "about:blank",
+  "title": "Unauthorized",
+  "status": 401,
+  "detail": "Invalid or revoked API key",
+  "instance": "/api/v1/tasks"
+}
+```
+
+## Common HTTP Status Codes
+
+| Code | Meaning |
+|------|---------|
+| `200 OK` | Success (GET, PATCH) |
+| `201 Created` | Resource created (POST) |
+| `204 No Content` | Success with no body (DELETE) |
+| `400 Bad Request` | Invalid request parameters |
+| `401 Unauthorized` | Missing or invalid API key |
+| `403 Forbidden` | Operation not allowed (e.g., bootstrap after keys exist) |
+| `404 Not Found` | Resource does not exist |
+| `409 Conflict` | Duplicate resource or invalid state transition |
+| `422 Unprocessable Entity` | Request body validation failed |
+| `502 Bad Gateway` | Upstream service error (e.g., GitHub PR creation failed) |
+
+## Pagination
+
+### Cursor-Based (Tasks)
+
+Tasks use cursor-based pagination for stable ordering. Pass the `created_at` of the
+last item as the `cursor` query parameter to get the next page.
+
+```bash
+# First page
+curl -H "X-API-Key: ct_..." "http://localhost:8000/api/v1/tasks?limit=20"
+
+# Next page (cursor = created_at of last item from previous response)
+curl -H "X-API-Key: ct_..." \
+  "http://localhost:8000/api/v1/tasks?limit=20&cursor=2024-01-15T10:30:00Z"
+```
+
+### Offset-Based (Feedback, Jobs, Traces)
+
+Feedback, jobs, and traces use `limit` and `offset` for pagination.
+
+```bash
+# First page
+curl -H "X-API-Key: ct_..." "http://localhost:8000/api/v1/feedback?task_id=...&limit=20&offset=0"
+
+# Next page
+curl -H "X-API-Key: ct_..." "http://localhost:8000/api/v1/feedback?task_id=...&limit=20&offset=20"
+```
+
+## Resource Summary
+
+| Resource | Endpoints | Description |
+|----------|-----------|-------------|
+| [Tasks](/api/tasks) | 4 | Create and manage optimization tasks |
+| [Feedback](/api/feedback) | 2 | Submit and query feedback entries |
+| [Prompts](/api/prompts) | 3 | Retrieve and manage prompt versions |
+| [Jobs](/api/jobs) | 3 | Monitor optimization job status |
+| [Traces](/api/traces) | 3 | Ingest and score LLM call traces |
+| [API Keys](/api/keys) | 3 | Create and revoke API keys |
+| [Optimize](/api/optimize) | 1 | Trigger on-demand optimization |

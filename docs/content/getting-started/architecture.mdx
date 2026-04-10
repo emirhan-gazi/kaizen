@@ -1,0 +1,125 @@
+# Architecture Overview
+
+Kaizen is a self-hosted platform that closes the loop between LLM feedback collection and prompt optimization. This page explains how the components fit together.
+
+## System Diagram
+
+```
+                    +-----------+
+                    |  kaizen-sdk   |  pip install kaizen-sdk
+                    |  (Python) |
+                    +-----+-----+
+                          |
+                          | REST API calls
+                          |
+                    +-----v-----+
+                    |  FastAPI   |  :8000
+                    |   API      |
+                    +--+----+---+
+                       |    |
+              +--------+    +--------+
+              |                      |
+        +-----v------+        +-----v-----+
+        | PostgreSQL  |        |   Redis   |
+        | :5432       |        |   :6379   |
+        |             |        |           |
+        | - tasks     |        | - prompt  |
+        | - feedback  |        |   cache   |
+        | - prompts   |        | - Celery  |
+        | - jobs      |        |   broker  |
+        +-------------+        | - dedup   |
+                               |   lock    |
+                               +-----+-----+
+                                     |
+                               +-----v------+
+                               | Celery     |
+                               | Worker     |
+                               |            |
+                               | DSPy       |
+                               | MIPROv2    |
+                               +-----+------+
+                                     |
+                               +-----v------+
+                               | Git        |
+                               | Provider   |
+                               | (GitHub /  |
+                               | Bitbucket /|
+                               | GitLab)    |
+                               +-----+------+
+                                     |
+                               +-----v------+
+                               | Pull       |
+                               | Request    |
+                               +------------+
+
+        +-------------+
+        | Dashboard   |  :3000   React SPA (Next.js + shadcn/ui)
+        +-------------+
+
+        +-------------+
+        | Docs Site   |  :4000   Nextra documentation (this site)
+        +-------------+
+```
+
+## Components
+
+### SDK
+
+The Python SDK (`kaizen-sdk`) is the primary integration point. It provides `CTClient` and `AsyncCTClient` classes for logging feedback, retrieving optimized prompts, and triggering optimization jobs. Prompts are cached locally with a configurable TTL (default: 5 minutes).
+
+### API
+
+A FastAPI REST server that handles all operations: task management, feedback ingestion, prompt versioning, job orchestration, and API key management. All endpoints (except `/health`) require authentication via `X-API-Key` header. Auto-generates OpenAPI docs at `/docs`.
+
+### PostgreSQL
+
+Persistent storage for all platform data: tasks, feedback entries, prompt versions, optimization jobs, and API keys. Accessed via async SQLAlchemy with the psycopg async driver for non-blocking database operations.
+
+### Redis
+
+Serves three roles:
+- **Prompt cache** -- 5-minute TTL cache-aside pattern for fast prompt retrieval
+- **Celery broker** -- Message queue for dispatching optimization jobs to workers
+- **Auto-trigger dedup lock** -- `SET NX EX 300` lock that prevents duplicate optimization dispatch when multiple feedback entries cross the threshold simultaneously
+
+### Celery Worker
+
+Background worker that runs DSPy MIPROv2 optimization. Receives jobs from Redis, splits feedback data 20/80 (train/validation), runs up to 15 trials with the teacher model, evaluates candidates with the judge model, and saves the best prompt as a draft version. Includes cost estimation and wall-clock timeout (30 minutes).
+
+### Git Provider
+
+Creates pull requests with optimized prompts after successful optimization. Supports GitHub, Bitbucket Server, and GitLab. The PR includes the optimized prompt text, before/after evaluation scores, and job metadata. Configurable per task for repository and branch targeting.
+
+### Dashboard
+
+A React SPA built with Next.js and shadcn/ui. Provides a web interface for monitoring optimization jobs, viewing score trends, managing prompts, and inspecting feedback data. Connects directly to the API (no backend-for-frontend).
+
+## The Optimization Loop
+
+The core value of Kaizen is its automated optimization loop. Here is how it works end to end:
+
+1. **SDK logs feedback** -- Your application calls `client.log_feedback()` with inputs, outputs, and quality scores. Each entry is stored in PostgreSQL and associated with a task.
+
+2. **Threshold reached** -- When a task's feedback count reaches its configured threshold (default: 50), the API checks for an existing optimization lock in Redis using `SET NX EX 300`. This prevents duplicate dispatch if multiple feedback entries arrive simultaneously.
+
+3. **Worker runs DSPy** -- A Celery worker picks up the job and runs DSPy MIPROv2. The optimizer splits feedback into training (20%) and validation (80%) sets, generates candidate prompts using the teacher model, and evaluates each with an LLM-as-judge (3-call majority vote with randomized ordering).
+
+4. **Draft prompt saved** -- The best-performing prompt is saved as a new version with `draft` status, along with its evaluation score, the full DSPy state as portable JSON, and job metadata.
+
+5. **Auto-PR created** -- The Git provider creates a pull request in your repository containing the optimized prompt file. The PR description includes score delta, before/after comparison, and a link back to the job.
+
+6. **Team reviews and merges** -- Your team reviews the prompt changes like any code change. The PR shows exactly what changed and the measurable improvement.
+
+7. **Prompt activated** -- When the PR is merged (or the prompt is activated via API), the new version becomes `active`, the Redis cache is invalidated, and the SDK automatically picks up the new prompt on the next `get_prompt()` call.
+
+## Data Flow Summary
+
+| Stage | From | To | What |
+|-------|------|----|------|
+| Feedback ingestion | SDK | API -> PostgreSQL | Input/output/score tuples |
+| Threshold check | API | Redis | Dedup lock check |
+| Job dispatch | API | Redis -> Worker | Optimization task message |
+| Optimization | Worker | LLM Provider | DSPy MIPROv2 trials |
+| Result storage | Worker | PostgreSQL | Draft prompt + job metadata |
+| PR creation | Worker | Git Provider | Optimized prompt file |
+| Prompt serving | API -> Redis | SDK | Active prompt text (cached) |

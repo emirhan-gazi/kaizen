@@ -1,0 +1,175 @@
+import { Callout } from 'nextra/components'
+
+# Configuration
+
+**All configuration options for the CT SDK client and server.**
+
+---
+
+## SDK Client Configuration
+
+The `CTClient` and `AsyncCTClient` can be configured via constructor arguments or environment variables.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAIZEN_API_KEY` | — | **Required.** API key for authenticating with the CT server. |
+| `KAIZEN_BASE_URL` | `http://localhost:8000` | Base URL of the CT server. Include protocol; trailing slashes are stripped. |
+
+### Constructor Arguments
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `api_key` | `str \| None` | `None` | API key. Takes precedence over `KAIZEN_API_KEY` env var. |
+| `base_url` | `str \| None` | `None` | Server URL. Takes precedence over `KAIZEN_BASE_URL` env var. |
+| `cache_ttl` | `float` | `300.0` | Prompt cache time-to-live in seconds. Set to `0` to disable caching. |
+| `timeout` | `float` | `30.0` | HTTP request timeout in seconds. |
+
+### Priority Order
+
+Constructor arguments → environment variables → built-in defaults.
+
+```python
+# Uses KAIZEN_API_KEY and KAIZEN_BASE_URL from environment
+client = CTClient()
+
+# Overrides environment for api_key only
+client = CTClient(api_key="sk-override")
+
+# Fully explicit
+client = CTClient(
+    api_key="sk-my-key",
+    base_url="https://ct.my-company.com",
+    cache_ttl=600.0,
+    timeout=60.0,
+)
+```
+
+### Auto-Instrument Configuration
+
+The `instrument()` function also reads `KAIZEN_API_KEY` and `KAIZEN_BASE_URL`:
+
+```python
+from kaizen_sdk import instrument
+import litellm
+
+# From environment
+instrument(litellm)
+
+# Explicit override
+instrument(litellm, api_key="sk-my-key", base_url="https://ct.my-company.com")
+```
+
+<Callout type="warning">
+If `KAIZEN_API_KEY` is not set and `api_key` is not passed to `instrument()`, traces are silently dropped — LLM calls continue but nothing is sent to CT. Always verify `KAIZEN_API_KEY` is set in your production environment.
+</Callout>
+
+---
+
+## Server Configuration
+
+The CT server is configured via environment variables (typically in a `.env` file or Docker environment). All variables are read at startup via Pydantic Settings.
+
+### Database
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@localhost:5432/continuous_tune` | PostgreSQL connection string. Use the `psycopg` driver (v3). |
+
+### Redis
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL used for caching and pub/sub. |
+
+### Celery (Background Workers)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CELERY_BROKER_URL` | `redis://localhost:6379/0` | Celery message broker. |
+| `CELERY_RESULT_BACKEND` | `db+postgresql+psycopg://postgres:postgres@localhost:5432/continuous_tune` | Backend for storing Celery task results. |
+
+### API Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_HOST` | `0.0.0.0` | Host interface the FastAPI server binds to. |
+| `API_PORT` | `8000` | Port the FastAPI server listens on. |
+
+### Caching
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROMPT_CACHE_TTL` | `300` | Server-side prompt cache TTL in seconds (5 minutes). |
+| `FEEDBACK_RETENTION_LIMIT` | `1000` | Maximum feedback entries retained per task before old entries are pruned. |
+
+### LLM
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | `sk-placeholder` | OpenAI API key used by the optimization worker. |
+| `OPENAI_API_BASE` | `""` | Optional custom OpenAI-compatible API base URL (e.g. for Azure OpenAI or local models). |
+| `SSL_VERIFY` | `true` | Whether to verify SSL certificates on outbound LLM calls. Set `false` for self-signed certs in dev. |
+
+### Optimization
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TEACHER_MODEL` | `gpt-4o` | Default LLM used as teacher during DSPy optimization. |
+| `JUDGE_MODEL` | `gpt-4o-mini` | Default LLM used to evaluate prompt quality. |
+| `COST_BUDGET_DEFAULT` | `5.0` | Default maximum USD budget per optimization run. |
+| `MAX_TRIALS_DEFAULT` | `15` | Default maximum optimization trials per run. |
+| `LLM_TIMEOUT` | `120` | HTTP timeout in seconds for individual LLM calls during optimization. |
+| `OPTIMIZATION_WALL_TIMEOUT` | `1800` | Wall-clock timeout in seconds (30 min) before an optimization job is forcefully terminated. |
+| `SEED_SIZE_LIMIT` | `1000` | Maximum number of rows allowed in a seed data upload. |
+
+### Git Integration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GIT_PROVIDER` | `github` | Git provider: `github`, `bitbucket_server`, or `gitlab`. |
+| `GIT_BASE_URL` | `""` | Base URL for self-hosted providers (e.g. `https://bitbucket.company.com`). |
+| `GIT_TOKEN` | `""` | Personal access token for the Git provider. |
+| `GIT_PROJECT` | `""` | Project key (Bitbucket Server only). |
+| `GIT_REPO` | `""` | Repository in `owner/repo` format (e.g. `my-org/my-service`). |
+| `GIT_BASE_BRANCH` | `main` | Base branch for auto-generated pull requests. |
+| `GIT_TOKEN_ENCRYPTION_KEY` | `""` | Fernet key for encrypting stored Git tokens. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. |
+
+<Callout type="info">
+**Legacy GitHub aliases** — `GITHUB_TOKEN`, `GITHUB_REPO`, `GITHUB_BASE_BRANCH`, and `GITHUB_TOKEN_ENCRYPTION_KEY` are supported for backwards compatibility. If `GIT_*` variables are not set, the server falls back to these legacy aliases.
+</Callout>
+
+### Webhooks
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GITHUB_WEBHOOK_SECRET` | `""` | Secret for validating incoming GitHub webhook payloads. Set this to a random string and configure the same value in your GitHub webhook settings. |
+
+---
+
+## Minimal Production .env
+
+```bash
+# Required
+KAIZEN_API_KEY=sk-your-api-key
+
+# Database
+DATABASE_URL=postgresql+psycopg://ct_user:ct_pass@db:5432/continuous_tune
+
+# Redis
+REDIS_URL=redis://redis:6379/0
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=db+postgresql+psycopg://ct_user:ct_pass@db:5432/continuous_tune
+
+# LLM
+OPENAI_API_KEY=sk-your-openai-key
+TEACHER_MODEL=gpt-4o
+JUDGE_MODEL=gpt-4o-mini
+
+# Git auto-PR
+GIT_PROVIDER=github
+GIT_TOKEN=ghp_your-token
+GIT_REPO=my-org/my-service
+GIT_BASE_BRANCH=main
+```
