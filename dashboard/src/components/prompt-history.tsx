@@ -28,11 +28,9 @@ export function PromptHistory({ prompts }: { prompts: PromptResponse[] }) {
     );
   }
 
-  // Sort by version descending for display, ascending index for prev lookup
   const sorted = [...prompts].sort(
     (a, b) => b.version_number - a.version_number
   );
-  const byVersion = new Map(prompts.map((p) => [p.version_number, p]));
 
   const toggle = (id: string, mode: ExpandMode) => {
     if (expandedId === id && expandMode === mode) {
@@ -59,8 +57,7 @@ export function PromptHistory({ prompts }: { prompts: PromptResponse[] }) {
         </TableHeader>
         <TableBody>
           {sorted.map((p) => {
-            const prev = byVersion.get(p.version_number - 1);
-            const hasDiff = p.prompt_text && prev?.prompt_text;
+            const hasDiff = p.prompt_text && p.original_prompt;
             const isExpanded = expandedId === p.id;
 
             return (
@@ -131,13 +128,13 @@ export function PromptHistory({ prompts }: { prompts: PromptResponse[] }) {
                 {isExpanded &&
                   expandMode === "diff" &&
                   p.prompt_text &&
-                  prev?.prompt_text && (
+                  p.original_prompt && (
                     <TableRow>
                       <TableCell colSpan={7} className="p-4">
                         <PromptDiff
-                          oldText={prev.prompt_text}
+                          oldText={p.original_prompt}
                           newText={p.prompt_text}
-                          oldLabel={`v${prev.version_number}`}
+                          oldLabel="Original"
                           newLabel={`v${p.version_number}`}
                         />
                       </TableCell>

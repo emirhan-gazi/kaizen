@@ -83,6 +83,9 @@ export interface TaskSummary {
   active_prompt_score: number | null;
   threshold_progress: string;
   created_at: string;
+  mode?: string;
+  git_repo?: string | null;
+  git_provider?: string | null;
 }
 
 export interface JobResponse {
@@ -106,6 +109,7 @@ export interface PromptResponse {
   task_id: string;
   version_number: number;
   prompt_text: string | null;
+  original_prompt: string | null;
   eval_score: number | null;
   judge_score: number | null;
   status: string;
@@ -141,6 +145,18 @@ export function fetchPromptVersions(taskId: string): Promise<PromptResponse[]> {
 
 export function retryPr(jobId: string): Promise<JobResponse> {
   return apiFetch<JobResponse>(`/api/v1/jobs/${jobId}/retry-pr`, {
+    method: "POST",
+  });
+}
+
+export function createPrFromPreview(jobId: string): Promise<JobResponse> {
+  return apiFetch<JobResponse>(`/api/v1/jobs/${jobId}/create-pr`, {
+    method: "POST",
+  });
+}
+
+export function rejectOptimization(jobId: string): Promise<JobResponse> {
+  return apiFetch<JobResponse>(`/api/v1/jobs/${jobId}/reject`, {
     method: "POST",
   });
 }

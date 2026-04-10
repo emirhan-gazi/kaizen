@@ -19,11 +19,12 @@ interface ScoreChartProps {
 export function ScoreChart({ prompts }: ScoreChartProps) {
   // Sort by version ascending and filter to those with scores
   const data = [...prompts]
-    .filter((p) => p.eval_score !== null)
+    .filter((p) => p.eval_score !== null || p.judge_score !== null)
     .sort((a, b) => a.version_number - b.version_number)
     .map((p) => ({
       version: `v${p.version_number}`,
-      score: Number(((p.eval_score ?? 0) * 100).toFixed(1)),
+      dataset: p.eval_score !== null ? Number(((p.eval_score) * 100).toFixed(1)) : null,
+      judge: p.judge_score !== null ? Number(((p.judge_score) * 100).toFixed(1)) : null,
     }));
 
   if (data.length < 2) {
@@ -51,7 +52,10 @@ export function ScoreChart({ prompts }: ScoreChartProps) {
             className="text-muted-foreground"
           />
           <Tooltip
-            formatter={(value: number) => [`${value}%`, "Score"]}
+            formatter={(value: number, name: string) => [
+              `${value}%`,
+              name === "dataset" ? "Dataset" : "Judge",
+            ]}
             contentStyle={{
               borderRadius: "0.5rem",
               border: "1px solid hsl(var(--border))",
@@ -60,11 +64,24 @@ export function ScoreChart({ prompts }: ScoreChartProps) {
           />
           <Line
             type="monotone"
-            dataKey="score"
+            dataKey="dataset"
             stroke="hsl(var(--primary))"
             strokeWidth={2}
             dot={{ r: 4 }}
             activeDot={{ r: 6 }}
+            name="dataset"
+            connectNulls
+          />
+          <Line
+            type="monotone"
+            dataKey="judge"
+            stroke="#f59e0b"
+            strokeWidth={2}
+            strokeDasharray="5 5"
+            dot={{ r: 4 }}
+            activeDot={{ r: 6 }}
+            name="judge"
+            connectNulls
           />
         </LineChart>
       </ResponsiveContainer>

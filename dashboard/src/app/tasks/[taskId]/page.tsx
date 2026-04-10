@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useTask, useJobs, usePromptVersions } from "@/lib/hooks";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { JobsTable } from "@/components/jobs-table";
 import { PromptHistory } from "@/components/prompt-history";
 import { ScoreChart } from "@/components/score-chart";
 import { triggerOptimization, deleteTask } from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
 type Tab = "overview" | "jobs" | "prompts";
@@ -24,10 +25,10 @@ export default function TaskDetailPage() {
   const params = useParams();
   const taskId = params.taskId as string;
   const [activeTab, setActiveTab] = useState<Tab>("overview");
-  const router = useRouter();
   const [optimizing, setOptimizing] = useState(false);
   const [optimizeError, setOptimizeError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: task, isLoading: taskLoading } = useTask(taskId);
 
@@ -92,7 +93,7 @@ export default function TaskDetailPage() {
               setDeleting(true);
               try {
                 await deleteTask(taskId);
-                router.push("/");
+                window.location.href = "/";
               } catch {
                 setDeleting(false);
               }
@@ -171,7 +172,16 @@ export default function TaskDetailPage() {
         </div>
       )}
 
-      {activeTab === "jobs" && <JobsTable jobs={jobs ?? []} />}
+      {activeTab === "jobs" && (
+        <JobsTable
+          jobs={jobs ?? []}
+          taskMode={task.mode}
+          hasGitConfig={!!(task.git_repo || task.git_provider)}
+          onJobsChange={() => {
+            queryClient.invalidateQueries({ queryKey: ["jobs"] });
+          }}
+        />
+      )}
 
       {activeTab === "prompts" && <PromptHistory prompts={prompts ?? []} />}
     </div>

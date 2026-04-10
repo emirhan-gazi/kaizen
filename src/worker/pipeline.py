@@ -39,9 +39,9 @@ from src.models.base import (
 )
 from src.services.auto_pr import AutoPRError, create_optimization_pr
 from src.services.git_provider import get_git_provider
-from src.services.prompt_file import detect_format, extract_prompt
+from src.services.prompt_file import detect_format, extract_prompt, replace_prompt
 from src.utils.crypto import decrypt_token
-from src.utils.pr_template import PRContext
+from src.utils.pr_template import PRContext, build_pr_body, build_pr_title
 from src.worker.evaluators import batch_evaluate_traces, create_evaluator
 
 logger = logging.getLogger(__name__)
@@ -75,10 +75,12 @@ def _update_job_status(
         job.completed_at = datetime.now(timezone.utc)
 
     if extra_metadata:
-        current = job.job_metadata or {}
+        current = dict(job.job_metadata or {})
         current.update(extra_metadata)
         job.job_metadata = current
 
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+    flag_modified(job, "job_metadata")
     session.commit()
     logger.info(
         "Job %s: %s -> %s (step: %s)",
@@ -265,6 +267,7 @@ def _run_pipeline(
         task_id=task.id,
         version_number=next_version,
         prompt_text=prompt_text,
+        original_prompt=existing_prompt,
         dspy_state_json=dspy_state,
         eval_score=dataset_score,
         judge_score=judge_score,
@@ -313,6 +316,93 @@ def _run_pipeline(
             "status": "SUCCESS",
             "pr_skipped": True,
             "reason": "mode=optimize_only",
+        }
+
+    # --- Mode check: pr_preview — generate preview data, no git push (D-16, D-18) ---
+    if task.mode == "pr_preview":
+        logger.info("Task %s mode=pr_preview — generating preview data", task.id)
+        # Re-query to avoid detached session issues after prior commit
+        prev_prompt = (
+            session.query(PromptVersion)
+            .filter_by(task_id=task.id, status="active")
+            .first()
+        )
+        pv = session.get(PromptVersion, prompt_version.id)
+        few_shots = _extract_few_shot_examples(pv.dspy_state_json if pv else None)
+        prev_score = prev_prompt.eval_score if prev_prompt else None
+        ctx = PRContext(
+            task_name=task.name,
+            version_number=pv.version_number if pv else next_version,
+            before_score=prev_score,
+            after_score=dataset_score,
+            feedback_count=len(examples),
+            optimizer="MIPROv2",
+            teacher_model=job_meta.get("teacher_model", settings.TEACHER_MODEL),
+            judge_model=job_meta.get("judge_model", settings.JUDGE_MODEL),
+            trials_completed=job_meta.get("trials_completed", 0),
+            duration_seconds=job_meta.get("duration_seconds", 0),
+            train_size=len(train),
+            val_size=len(val),
+            old_prompt_text=existing_prompt,
+            new_prompt_text=prompt_text,
+            few_shot_examples=few_shots,
+            job_id=str(job.id),
+            dspy_version=job_meta.get("dspy_version"),
+            litellm_version=job_meta.get("litellm_version"),
+            cost_usd=job_meta.get("cost_usd"),
+            judge_score=judge_score,
+        )
+        pr_body = build_pr_body(ctx)
+        pr_title = build_pr_title(ctx)
+        file_path = task.prompt_path or task.prompt_file or f"prompts/{task.name}.txt"
+
+        # Generate actual file diffs — what the PR would change
+        file_changes = []
+        if task.prompt_file and task.prompt_locator:
+            try:
+                provider_type = task.git_provider or settings.GIT_PROVIDER
+                git_repo = task.git_repo or settings.GIT_REPO
+                git_base_branch = task.git_base_branch or settings.GIT_BASE_BRANCH or "main"
+                git_token_encrypted = task.git_token_encrypted
+                token = decrypt_token(git_token_encrypted) if git_token_encrypted else settings.GIT_TOKEN
+                if git_repo and token:
+                    provider = get_git_provider(
+                        provider_type,
+                        token=token,
+                        base_url=task.git_base_url or settings.GIT_BASE_URL or "",
+                        project=task.git_project or settings.GIT_PROJECT or "",
+                        repo=git_repo,
+                    )
+                    fc = provider.read_file(task.prompt_file, ref=git_base_branch)
+                    original_file = fc.content
+                    fmt = detect_format(task.prompt_file)
+                    modified_file = replace_prompt(original_file, fmt, task.prompt_locator, prompt_text)
+                    file_changes.append({
+                        "path": task.prompt_file,
+                        "old_content": original_file,
+                        "new_content": modified_file,
+                    })
+            except Exception as exc:
+                logger.warning("Could not generate file diff for preview: %s", exc)
+
+        preview_data = {
+            "pr_body": pr_body,
+            "pr_title": pr_title,
+            "old_prompt": existing_prompt,
+            "new_prompt": prompt_text,
+            "file_path": file_path,
+            "file_changes": file_changes,
+        }
+        job_meta["pr_preview"] = preview_data
+        _update_job_status(
+            session, job, "SUCCESS", "completed",
+            extra_metadata=job_meta,
+        )
+        return {
+            "job_id": str(job.id),
+            "status": "SUCCESS",
+            "pr_skipped": True,
+            "reason": "mode=pr_preview — preview data stored in job_metadata",
         }
 
     # --- Quality gate: skip PR if scores are too low ---
@@ -597,31 +687,11 @@ def _extract_prompt_text(compiled: Any) -> str:
 
 
 def _load_existing_prompt(session: Session, task: Any) -> str | None:
-    """Load the existing prompt to seed MIPROv2.
+    """Load the existing prompt from source file or DB.
 
-    Priority: 1) latest active PromptVersion, 2) source file via git, 3) None.
+    Priority: 1) source file via git (the real prompt), 2) DB fallback, 3) None.
     """
-    # Try latest active prompt version
-    active = (
-        session.query(PromptVersion)
-        .filter_by(task_id=task.id, status="active")
-        .order_by(PromptVersion.version_number.desc())
-        .first()
-    )
-    if active and active.prompt_text:
-        return active.prompt_text
-
-    # Try latest draft
-    latest = (
-        session.query(PromptVersion)
-        .filter_by(task_id=task.id)
-        .order_by(PromptVersion.version_number.desc())
-        .first()
-    )
-    if latest and latest.prompt_text:
-        return latest.prompt_text
-
-    # Try reading from source file via git provider
+    # Try reading from source file via git provider (always preferred)
     if task.prompt_file and task.prompt_locator:
         try:
             provider_type = task.git_provider or settings.GIT_PROVIDER
@@ -643,6 +713,16 @@ def _load_existing_prompt(session: Session, task: Any) -> str | None:
                 return extract_prompt(fc.content, fmt, task.prompt_locator)
         except Exception as exc:
             logger.warning("Could not load existing prompt from git: %s", exc)
+
+    # Fallback: try latest prompt version from DB
+    latest = (
+        session.query(PromptVersion)
+        .filter_by(task_id=task.id)
+        .order_by(PromptVersion.version_number.desc())
+        .first()
+    )
+    if latest and latest.prompt_text:
+        return latest.prompt_text
 
     return None
 

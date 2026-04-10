@@ -53,6 +53,7 @@ async def create_task(
         github_base_branch=task.github_base_branch,
         prompt_path=task.prompt_path,
         prompt_format=task.prompt_format,
+        mode=task.mode,
         created_at=task.created_at,
         feedback_count=0,
         last_optimization=None,
@@ -140,6 +141,7 @@ async def list_tasks(
                 github_base_branch=task.github_base_branch,
                 prompt_path=task.prompt_path,
                 prompt_format=task.prompt_format,
+                mode=task.mode,
                 created_at=task.created_at,
                 feedback_count=fb_count,
                 last_optimization=last_opt,
@@ -202,6 +204,7 @@ async def get_task(
         github_base_branch=task.github_base_branch,
         prompt_path=task.prompt_path,
         prompt_format=task.prompt_format,
+        mode=task.mode,
         created_at=task.created_at,
         feedback_count=fb_count,
         last_optimization=last_opt,
@@ -221,9 +224,9 @@ async def delete_task(
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    await db.execute(delete(Trace).where(Trace.task_id == task_id))
-    await db.execute(delete(FeedbackEntry).where(FeedbackEntry.task_id == task_id))
-    await db.execute(delete(PromptVersion).where(PromptVersion.task_id == task_id))
     await db.execute(delete(OptimizationJob).where(OptimizationJob.task_id == task_id))
+    await db.execute(delete(PromptVersion).where(PromptVersion.task_id == task_id))
+    await db.execute(delete(FeedbackEntry).where(FeedbackEntry.task_id == task_id))
+    await db.execute(delete(Trace).where(Trace.task_id == task_id))
     await db.delete(task)
 

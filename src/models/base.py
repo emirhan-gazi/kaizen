@@ -122,6 +122,7 @@ class PromptVersion(Base):
         Integer, nullable=False
     )
     prompt_text: Mapped[str | None] = mapped_column(Text)
+    original_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     dspy_state_json: Mapped[dict | None] = mapped_column(JSONB)
     eval_score: Mapped[float | None] = mapped_column(Float)
     judge_score: Mapped[float | None] = mapped_column(Float, nullable=True)

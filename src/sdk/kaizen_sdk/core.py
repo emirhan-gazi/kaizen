@@ -58,6 +58,7 @@ def init(
     Args:
         mode: "optimize_only" (default) — optimize prompts, view in dashboard.
               "auto_pr" — optimize + create PR on your git repo.
+              "pr_preview" — optimize + store PR preview, approve from dashboard.
     """
     global _api_key, _base_url, _http_client, _sync_client, _git_config, _task_defaults
 

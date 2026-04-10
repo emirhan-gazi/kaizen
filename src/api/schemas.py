@@ -63,6 +63,7 @@ class TaskSummary(BaseModel):
     prompt_locator: str | None = None
     feedback_source: str = "sdk"
     auto_eval: bool = False
+    mode: str = "optimize_only"
     # Legacy aliases (backwards compat)
     github_repo: str | None = None
     github_base_branch: str | None = None
@@ -99,7 +100,7 @@ class FeedbackCreate(BaseModel):
     feedback_threshold: int | None = None
     teacher_model: str | None = None
     judge_model: str | None = None
-    mode: str | None = Field(default=None, pattern=r"^(optimize_only|auto_pr)$")
+    mode: str | None = Field(default=None, pattern=r"^(optimize_only|auto_pr|pr_preview)$")
 
     @model_validator(mode="after")
     def require_task_id_or_name(self) -> "FeedbackCreate":
@@ -129,6 +130,7 @@ class PromptResponse(BaseModel):
     task_id: uuid.UUID
     version_number: int
     prompt_text: str | None
+    original_prompt: str | None = None
     eval_score: float | None
     judge_score: float | None = None
     status: str
