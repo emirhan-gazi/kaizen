@@ -318,47 +318,52 @@ def _run_pipeline(
     # --- Mode check: pr_preview — generate preview data, no git push (D-16, D-18) ---
     if task.mode == "pr_preview":
         logger.info("Task %s mode=pr_preview — generating preview data", task.id)
+        # Re-query to avoid detached session issues after prior commit
         prev_prompt = (
             session.query(PromptVersion)
             .filter_by(task_id=task.id, status="active")
             .first()
         )
-        few_shots = _extract_few_shot_examples(prompt_version.dspy_state_json)
+        pv = session.get(PromptVersion, prompt_version.id)
+        few_shots = _extract_few_shot_examples(pv.dspy_state_json if pv else None)
+        prev_score = prev_prompt.eval_score if prev_prompt else None
+        prev_text = prev_prompt.prompt_text if prev_prompt else None
         ctx = PRContext(
             task_name=task.name,
-            version_number=prompt_version.version_number,
-            before_score=prev_prompt.eval_score if prev_prompt else None,
+            version_number=pv.version_number if pv else next_version,
+            before_score=prev_score,
             after_score=dataset_score,
             feedback_count=len(examples),
-            optimizer=prompt_version.optimizer or "MIPROv2",
+            optimizer="MIPROv2",
             teacher_model=job_meta.get("teacher_model", settings.TEACHER_MODEL),
             judge_model=job_meta.get("judge_model", settings.JUDGE_MODEL),
             trials_completed=job_meta.get("trials_completed", 0),
             duration_seconds=job_meta.get("duration_seconds", 0),
             train_size=len(train),
             val_size=len(val),
-            old_prompt_text=prev_prompt.prompt_text if prev_prompt else None,
+            old_prompt_text=prev_text,
             new_prompt_text=prompt_text,
             few_shot_examples=few_shots,
             job_id=str(job.id),
             dspy_version=job_meta.get("dspy_version"),
             litellm_version=job_meta.get("litellm_version"),
             cost_usd=job_meta.get("cost_usd"),
-            judge_score=prompt_version.judge_score,
+            judge_score=judge_score,
         )
         pr_body = build_pr_body(ctx)
         pr_title = build_pr_title(ctx)
-        file_path = task.prompt_path or f"prompts/{task.name}.txt"
+        file_path = task.prompt_path or task.prompt_file or f"prompts/{task.name}.txt"
         preview_data = {
             "pr_body": pr_body,
             "pr_title": pr_title,
-            "old_prompt": prev_prompt.prompt_text if prev_prompt else None,
+            "old_prompt": prev_text,
             "new_prompt": prompt_text,
             "file_path": file_path,
         }
+        job_meta["pr_preview"] = preview_data
         _update_job_status(
             session, job, "SUCCESS", "completed",
-            extra_metadata={**job_meta, "pr_preview": preview_data},
+            extra_metadata=job_meta,
         )
         return {
             "job_id": str(job.id),
