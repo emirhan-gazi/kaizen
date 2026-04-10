@@ -83,6 +83,9 @@ export interface TaskSummary {
   active_prompt_score: number | null;
   threshold_progress: string;
   created_at: string;
+  mode?: string;
+  git_repo?: string | null;
+  git_provider?: string | null;
 }
 
 export interface JobResponse {

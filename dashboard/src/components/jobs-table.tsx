@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "./status-badge";
 import { retryPr } from "@/lib/api";
 import type { JobResponse } from "@/lib/api";
+import { PrPreviewModal } from "./pr-preview-modal";
 
 function formatDate(d: string | null): string {
   if (!d) return "-";
@@ -28,8 +29,16 @@ function formatDuration(start: string | null, end: string | null): string {
   return `${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
-export function JobsTable({ jobs }: { jobs: JobResponse[] }) {
+interface JobsTableProps {
+  jobs: JobResponse[];
+  taskMode?: string;
+  hasGitConfig?: boolean;
+  onJobsChange?: () => void;
+}
+
+export function JobsTable({ jobs, taskMode, hasGitConfig = false, onJobsChange }: JobsTableProps) {
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [previewJob, setPreviewJob] = useState<JobResponse | null>(null);
 
   if (jobs.length === 0) {
     return (
@@ -51,6 +60,7 @@ export function JobsTable({ jobs }: { jobs: JobResponse[] }) {
   };
 
   return (
+    <>
     <Table>
       <TableHeader>
         <TableRow>
@@ -99,7 +109,19 @@ export function JobsTable({ jobs }: { jobs: JobResponse[] }) {
             <TableCell className="text-sm text-muted-foreground">
               {formatDate(job.created_at)}
             </TableCell>
-            <TableCell>
+            <TableCell className="flex items-center gap-1">
+              {taskMode === "pr_preview" &&
+                job.status === "SUCCESS" &&
+                !!job.job_metadata?.pr_preview &&
+                !job.pr_url && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setPreviewJob(job)}
+                  >
+                    Preview PR
+                  </Button>
+                )}
               {job.status === "PR_FAILED" && (
                 <Button
                   size="sm"
@@ -115,5 +137,18 @@ export function JobsTable({ jobs }: { jobs: JobResponse[] }) {
         ))}
       </TableBody>
     </Table>
+    {previewJob && (
+      <PrPreviewModal
+        open={!!previewJob}
+        onOpenChange={(open) => { if (!open) setPreviewJob(null); }}
+        job={previewJob}
+        hasGitConfig={hasGitConfig}
+        onActionComplete={() => {
+          setPreviewJob(null);
+          onJobsChange?.();
+        }}
+      />
+    )}
+    </>
   );
 }
