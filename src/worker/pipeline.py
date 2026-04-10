@@ -267,6 +267,7 @@ def _run_pipeline(
         task_id=task.id,
         version_number=next_version,
         prompt_text=prompt_text,
+        original_prompt=existing_prompt,
         dspy_state_json=dspy_state,
         eval_score=dataset_score,
         judge_score=judge_score,

@@ -130,6 +130,7 @@ class PromptResponse(BaseModel):
     task_id: uuid.UUID
     version_number: int
     prompt_text: str | None
+    original_prompt: str | None = None
     eval_score: float | None
     judge_score: float | None = None
     status: str

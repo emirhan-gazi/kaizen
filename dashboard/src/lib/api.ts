@@ -109,6 +109,7 @@ export interface PromptResponse {
   task_id: string;
   version_number: number;
   prompt_text: string | null;
+  original_prompt: string | null;
   eval_score: number | null;
   judge_score: number | null;
   status: string;
