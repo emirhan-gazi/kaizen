@@ -687,31 +687,11 @@ def _extract_prompt_text(compiled: Any) -> str:
 
 
 def _load_existing_prompt(session: Session, task: Any) -> str | None:
-    """Load the existing prompt to seed MIPROv2.
+    """Load the existing prompt from source file or DB.
 
-    Priority: 1) latest active PromptVersion, 2) source file via git, 3) None.
+    Priority: 1) source file via git (the real prompt), 2) DB fallback, 3) None.
     """
-    # Try latest active prompt version
-    active = (
-        session.query(PromptVersion)
-        .filter_by(task_id=task.id, status="active")
-        .order_by(PromptVersion.version_number.desc())
-        .first()
-    )
-    if active and active.prompt_text:
-        return active.prompt_text
-
-    # Try latest draft
-    latest = (
-        session.query(PromptVersion)
-        .filter_by(task_id=task.id)
-        .order_by(PromptVersion.version_number.desc())
-        .first()
-    )
-    if latest and latest.prompt_text:
-        return latest.prompt_text
-
-    # Try reading from source file via git provider
+    # Try reading from source file via git provider (always preferred)
     if task.prompt_file and task.prompt_locator:
         try:
             provider_type = task.git_provider or settings.GIT_PROVIDER
@@ -733,6 +713,16 @@ def _load_existing_prompt(session: Session, task: Any) -> str | None:
                 return extract_prompt(fc.content, fmt, task.prompt_locator)
         except Exception as exc:
             logger.warning("Could not load existing prompt from git: %s", exc)
+
+    # Fallback: try latest prompt version from DB
+    latest = (
+        session.query(PromptVersion)
+        .filter_by(task_id=task.id)
+        .order_by(PromptVersion.version_number.desc())
+        .first()
+    )
+    if latest and latest.prompt_text:
+        return latest.prompt_text
 
     return None
 
