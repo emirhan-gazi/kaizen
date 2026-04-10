@@ -145,6 +145,18 @@ export function retryPr(jobId: string): Promise<JobResponse> {
   });
 }
 
+export function createPrFromPreview(jobId: string): Promise<JobResponse> {
+  return apiFetch<JobResponse>(`/api/v1/jobs/${jobId}/create-pr`, {
+    method: "POST",
+  });
+}
+
+export function rejectOptimization(jobId: string): Promise<JobResponse> {
+  return apiFetch<JobResponse>(`/api/v1/jobs/${jobId}/reject`, {
+    method: "POST",
+  });
+}
+
 export interface OptimizeResponse {
   job: JobResponse;
   cost_estimate: {

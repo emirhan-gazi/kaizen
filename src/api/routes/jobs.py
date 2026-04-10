@@ -175,3 +175,160 @@ async def retry_pr(
         )
 
     return JobResponse.model_validate(job, from_attributes=True)
+
+
+@router.post("/{job_id}/create-pr", response_model=JobResponse)
+async def create_pr_from_preview(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _key=Depends(require_api_key),
+) -> JobResponse:
+    """Create a PR from stored preview data (D-19).
+
+    Called from the dashboard when user approves a pr_preview optimization.
+    Only allowed when job status is SUCCESS and pr_preview data exists in metadata.
+    """
+    job = await db.get(OptimizationJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status != "SUCCESS":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job status is '{job.status}', create-pr only allowed for SUCCESS jobs",
+        )
+
+    job_meta = job.job_metadata or {}
+    if "pr_preview" not in job_meta:
+        raise HTTPException(
+            status_code=409,
+            detail="No PR preview data found in job metadata",
+        )
+
+    if job.pr_url:
+        raise HTTPException(
+            status_code=409,
+            detail="PR already created for this job",
+        )
+
+    if job.prompt_version_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No prompt version associated with this job",
+        )
+
+    # Load related objects
+    prompt_version = await db.get(PromptVersion, job.prompt_version_id)
+    if prompt_version is None:
+        raise HTTPException(status_code=404, detail="Prompt version not found")
+
+    task = await db.get(Task, job.task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Get previous active prompt for comparison
+    prev_query = (
+        select(PromptVersion)
+        .where(PromptVersion.task_id == task.id, PromptVersion.status == "active")
+        .limit(1)
+    )
+    prev_result = await db.execute(prev_query)
+    prev_prompt = prev_result.scalar_one_or_none()
+
+    ctx = PRContext(
+        task_name=task.name,
+        version_number=prompt_version.version_number,
+        before_score=prev_prompt.eval_score if prev_prompt else None,
+        after_score=prompt_version.eval_score or 0.0,
+        feedback_count=job.feedback_count or 0,
+        optimizer=prompt_version.optimizer or "MIPROv2",
+        teacher_model=job_meta.get("teacher_model", settings.TEACHER_MODEL),
+        judge_model=job_meta.get("judge_model", settings.JUDGE_MODEL),
+        trials_completed=job_meta.get("trials_completed", 0),
+        duration_seconds=job_meta.get("duration_seconds", 0),
+        train_size=job_meta.get("train_size", 0),
+        val_size=job_meta.get("val_size", 0),
+        old_prompt_text=prev_prompt.prompt_text if prev_prompt else None,
+        new_prompt_text=prompt_version.prompt_text or "",
+        few_shot_examples=None,
+        job_id=str(job.id),
+        dspy_version=job_meta.get("dspy_version"),
+        litellm_version=job_meta.get("litellm_version"),
+        cost_usd=job_meta.get("cost_usd"),
+    )
+
+    # Resolve git provider (same logic as retry_pr)
+    token = decrypt_token(task.git_token_encrypted) if task.git_token_encrypted else None
+    if not token and settings.GIT_TOKEN:
+        token = settings.GIT_TOKEN
+    elif not token and settings.GITHUB_TOKEN:
+        token = settings.GITHUB_TOKEN
+
+    provider = get_git_provider(
+        task.git_provider or settings.GIT_PROVIDER or "github",
+        token=token or "",
+        base_url=task.git_base_url or settings.GIT_BASE_URL or "",
+        project=task.git_project or settings.GIT_PROJECT or "",
+        repo=task.git_repo or task.github_repo or settings.GIT_REPO or settings.GITHUB_REPO or "",
+    )
+    base_branch = (
+        task.git_base_branch or task.github_base_branch
+        or settings.GIT_BASE_BRANCH or settings.GITHUB_BASE_BRANCH or "main"
+    )
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        functools.partial(
+            create_optimization_pr,
+            provider=provider,
+            ctx=ctx,
+            prompt_content=prompt_version.prompt_text or "",
+            base_branch=base_branch,
+            prompt_path=task.prompt_path,
+            prompt_format=task.prompt_format or "text",
+            prompt_file=task.prompt_file,
+            prompt_locator=task.prompt_locator,
+        ),
+    )
+
+    if result.success:
+        job.pr_url = result.pr_url
+        await db.commit()
+    else:
+        raise HTTPException(
+            status_code=502,
+            detail=f"PR creation failed: {result.error}",
+        )
+
+    return JobResponse.model_validate(job, from_attributes=True)
+
+
+@router.post("/{job_id}/reject", response_model=JobResponse)
+async def reject_optimization(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _key=Depends(require_api_key),
+) -> JobResponse:
+    """Reject an optimization -- marks prompt version as rejected (D-10).
+
+    The prompt version won't be offered for PR creation again.
+    """
+    job = await db.get(OptimizationJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.prompt_version_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No prompt version associated with this job",
+        )
+
+    prompt_version = await db.get(PromptVersion, job.prompt_version_id)
+    if prompt_version is None:
+        raise HTTPException(status_code=404, detail="Prompt version not found")
+
+    prompt_version.status = "rejected"
+    await db.commit()
+
+    return JobResponse.model_validate(job, from_attributes=True)
