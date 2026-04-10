@@ -5,26 +5,33 @@
 <h1 align="center">Kaizen</h1>
 
 <p align="center">
-  <strong>Continuous prompt optimization for AI applications.</strong><br/>
-  Collect feedback, auto-optimize with DSPy, deliver as reviewable PRs.
+  <strong>Continuous improvement for AI applications — prompts and models.</strong><br/>
+  Collect feedback, auto-optimize prompts with DSPy, fine-tune models, deliver as reviewable PRs.
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> &nbsp;&bull;&nbsp;
   <a href="https://emirhan-gazi.github.io/kaizen/">Documentation</a> &nbsp;&bull;&nbsp;
   <a href="#architecture">Architecture</a> &nbsp;&bull;&nbsp;
-  <a href="#sdk-usage">SDK Usage</a>
+  <a href="#sdk-usage">SDK Usage</a> &nbsp;&bull;&nbsp;
+  <a href="#roadmap">Roadmap</a>
 </p>
 
 ---
 
-Most prompt engineering is manual — someone edits a string, deploys, hopes it's better. Kaizen closes the loop: your app collects real-world feedback, DSPy optimizes the prompt automatically, and the result lands as a PR you can review before merging.
+Most AI teams improve their systems manually — editing prompts, collecting datasets, running training jobs, hoping the new version is better. Kaizen automates this entire loop.
 
 ```
-Your App ──feedback──> Kaizen ──DSPy──> Optimized Prompt ──PR──> Your Repo
+                              ┌──── Soft Training ──── Optimized Prompt ──── PR
+Your App ──feedback──> Kaizen ┤
+                              └──── Hard Training ──── Fine-tuned Model ──── Deploy
 ```
 
-No competitor closes all three stages. Most tools stop at observation or evaluation. Kaizen goes all the way to automated optimization with human-in-the-loop delivery.
+**Soft Training** (available now): DSPy-based prompt optimization. Your existing prompt is refined incrementally based on real user feedback. Results are delivered as reviewable pull requests.
+
+**Hard Training** (coming soon): Model fine-tuning using the same feedback data. When prompt optimization hits a ceiling, Kaizen can fine-tune the underlying model via foundation API endpoints (OpenAI, Gemini), vLLM, or local training infrastructure.
+
+No other tool closes both loops. Most stop at observation or evaluation. Kaizen goes all the way to automated optimization with human-in-the-loop delivery.
 
 ## How It Works
 
@@ -286,6 +293,42 @@ Full API documentation at [emirhan-gazi.github.io/kaizen](https://emirhan-gazi.g
 - **Redis 7.4** — job queue + prompt cache
 - **Next.js 14** + Tailwind + shadcn/ui — dashboard
 - **Nextra** — documentation site
+
+## Roadmap
+
+Kaizen has two training modes. Soft training (prompt optimization) is available now. Hard training (model fine-tuning) is on the roadmap.
+
+### Soft Training (Prompt Optimization)
+
+- [x] DSPy MIPROv2 prompt optimization
+- [x] Existing prompt seeding (refine, not rewrite)
+- [x] Dual scoring (dataset + LLM judge)
+- [x] Auto-PR to GitHub, Bitbucket Server
+- [x] SDK with `kaizen.trace()` / `kaizen.flush()`
+- [x] Dashboard with prompt diff, job monitoring, key management
+- [ ] LLM-based prompt refinement (alternative to DSPy for more controlled changes)
+- [ ] A/B testing between prompt versions
+- [ ] Prompt version rollback
+
+### Hard Training (Model Fine-tuning)
+
+- [ ] Training data export from feedback (JSONL, Alpaca, ShareGPT formats)
+- [ ] Foundation API fine-tuning (OpenAI, Google Gemini, Anthropic)
+- [ ] vLLM / custom API fine-tuning integration
+- [ ] Local model training (LoRA/QLoRA via Hugging Face)
+- [ ] Training job orchestration and monitoring
+- [ ] Model evaluation pipeline (before/after benchmarks)
+- [ ] Automatic model deployment after training
+- [ ] Hardware requirement detection and routing
+
+### Platform
+
+- [ ] GitLab Auto-PR support
+- [ ] CI workflow for PR checks (pytest + ruff)
+- [ ] PyPI package publishing for kaizen-sdk
+- [ ] Webhook-based prompt activation on PR merge
+- [ ] Multi-tenant support
+- [ ] Cost tracking and budgeting dashboard
 
 ## Security
 
