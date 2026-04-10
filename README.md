@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> &nbsp;&bull;&nbsp;
-  <a href="http://localhost:4000">Documentation</a> &nbsp;&bull;&nbsp;
+  <a href="https://emirhan-gazi.github.io/kaizen/">Documentation</a> &nbsp;&bull;&nbsp;
   <a href="#architecture">Architecture</a> &nbsp;&bull;&nbsp;
   <a href="#sdk-usage">SDK Usage</a>
 </p>
@@ -261,7 +261,7 @@ All endpoints require `X-API-Key` header except `/health` and `/api/v1/keys/stat
 | POST | `/api/v1/keys/` | Create API key |
 | DELETE | `/api/v1/keys/{id}` | Revoke API key |
 
-Full API documentation at [http://localhost:4000](http://localhost:4000).
+Full API documentation at [emirhan-gazi.github.io/kaizen](https://emirhan-gazi.github.io/kaizen/).
 
 ## Server Configuration
 
