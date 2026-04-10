@@ -38,7 +38,7 @@ No other tool closes both loops. Most stop at observation or evaluation. Kaizen 
 <p align="center">
   <img src="idea.png" alt="Kaizen Architecture" width="100%" />
   <br/>
-  <em>Full interactive version: <a href="idea.excalidraw">idea.excalidraw</a> (open with <a href="https://excalidraw.com">excalidraw.com</a>)</em>
+  <em>Full interactive version: <a href="idea.excalidraw">idea.excalidraw</a> </em>
 </p>
 
 **1. Instrument your app** with the Python SDK — one line per LLM call:
