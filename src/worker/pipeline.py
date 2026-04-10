@@ -329,7 +329,6 @@ def _run_pipeline(
         pv = session.get(PromptVersion, prompt_version.id)
         few_shots = _extract_few_shot_examples(pv.dspy_state_json if pv else None)
         prev_score = prev_prompt.eval_score if prev_prompt else None
-        prev_text = prev_prompt.prompt_text if prev_prompt else None
         ctx = PRContext(
             task_name=task.name,
             version_number=pv.version_number if pv else next_version,
@@ -343,7 +342,7 @@ def _run_pipeline(
             duration_seconds=job_meta.get("duration_seconds", 0),
             train_size=len(train),
             val_size=len(val),
-            old_prompt_text=prev_text,
+            old_prompt_text=existing_prompt,
             new_prompt_text=prompt_text,
             few_shot_examples=few_shots,
             job_id=str(job.id),
@@ -358,7 +357,7 @@ def _run_pipeline(
         preview_data = {
             "pr_body": pr_body,
             "pr_title": pr_title,
-            "old_prompt": prev_text,
+            "old_prompt": existing_prompt,
             "new_prompt": prompt_text,
             "file_path": file_path,
         }
