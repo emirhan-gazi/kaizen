@@ -75,10 +75,12 @@ def _update_job_status(
         job.completed_at = datetime.now(timezone.utc)
 
     if extra_metadata:
-        current = job.job_metadata or {}
+        current = dict(job.job_metadata or {})
         current.update(extra_metadata)
         job.job_metadata = current
 
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+    flag_modified(job, "job_metadata")
     session.commit()
     logger.info(
         "Job %s: %s -> %s (step: %s)",
