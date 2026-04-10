@@ -144,6 +144,7 @@ async def _resolve_task(body: FeedbackCreate, db: AsyncSession) -> Task:
         git_base_branch=body.git_base_branch or settings.GIT_BASE_BRANCH or None,
         prompt_file=body.prompt_file,
         prompt_locator=body.prompt_locator,
+        mode=body.mode or "optimize_only",
     )
     db.add(task)
     await db.flush()

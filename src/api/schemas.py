@@ -99,6 +99,7 @@ class FeedbackCreate(BaseModel):
     feedback_threshold: int | None = None
     teacher_model: str | None = None
     judge_model: str | None = None
+    mode: str | None = Field(default=None, pattern=r"^(optimize_only|auto_pr)$")
 
     @model_validator(mode="after")
     def require_task_id_or_name(self) -> "FeedbackCreate":

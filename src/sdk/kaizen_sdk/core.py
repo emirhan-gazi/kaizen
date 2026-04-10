@@ -51,11 +51,13 @@ def init(
     feedback_threshold: int | None = None,
     teacher_model: str | None = None,
     judge_model: str | None = None,
+    mode: str = "optimize_only",
 ) -> None:
     """Initialize Kaizen SDK. Call once at startup.
 
-    Git config and task defaults are sent with feedback so auto-created
-    tasks get the right settings for optimization PRs.
+    Args:
+        mode: "optimize_only" (default) — optimize prompts, view in dashboard.
+              "auto_pr" — optimize + create PR on your git repo.
     """
     global _api_key, _base_url, _http_client, _sync_client, _git_config, _task_defaults
 
@@ -81,7 +83,7 @@ def init(
         if val:
             _git_config[key] = val
 
-    _task_defaults = {}
+    _task_defaults = {"mode": mode}
     if feedback_threshold is not None:
         _task_defaults["feedback_threshold"] = feedback_threshold
     if teacher_model:

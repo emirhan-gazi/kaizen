@@ -57,6 +57,9 @@ class Task(Base):
     github_token_encrypted: Mapped[str | None] = mapped_column(String, nullable=True)
     prompt_file: Mapped[str | None] = mapped_column(String, nullable=True)
     prompt_locator: Mapped[str | None] = mapped_column(String, nullable=True)
+    mode: Mapped[str] = mapped_column(
+        String, default="optimize_only", server_default=text("'optimize_only'")
+    )
     feedback_source: Mapped[str] = mapped_column(
         String, default="sdk", server_default=text("'sdk'")
     )
