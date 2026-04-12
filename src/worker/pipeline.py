@@ -714,7 +714,7 @@ def _load_existing_prompt(session: Session, task: Any) -> str | None:
         except Exception as exc:
             logger.warning("Could not load existing prompt from git: %s", exc)
 
-    # Fallback: try latest prompt version from DB
+    # Fallback 1: try latest prompt version from DB
     latest = (
         session.query(PromptVersion)
         .filter_by(task_id=task.id)
@@ -723,6 +723,11 @@ def _load_existing_prompt(session: Session, task: Any) -> str | None:
     )
     if latest and latest.prompt_text:
         return latest.prompt_text
+
+    # Fallback 2: prompt text captured by SDK from local filesystem
+    if getattr(task, "existing_prompt_text", None):
+        logger.info("Using SDK-captured prompt text (%d chars)", len(task.existing_prompt_text))
+        return task.existing_prompt_text
 
     return None
 

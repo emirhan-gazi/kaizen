@@ -255,6 +255,18 @@ def get_buffered_traces() -> list[dict]:
     ]
 
 
+def _read_prompt_from_file(prompt_file: str | None, prompt_locator: str | None) -> str | None:
+    """Try to read the prompt text from a local file using AST parsing."""
+    if not prompt_file or not prompt_locator:
+        return None
+    try:
+        from kaizen_sdk.detect import _parse_file_assignments  # noqa: PLC0415
+        assignments = _parse_file_assignments(prompt_file)
+        return assignments.get(prompt_locator)
+    except Exception:
+        return None
+
+
 def _build_feedback_payload(t: BufferedTrace, score: float) -> dict:
     payload: dict[str, Any] = {
         "task_name": t.task_name,
@@ -265,6 +277,9 @@ def _build_feedback_payload(t: BufferedTrace, score: float) -> dict:
         "prompt_file": t.prompt_file,
         "prompt_locator": t.prompt_locator,
     }
+    prompt_text = _read_prompt_from_file(t.prompt_file, t.prompt_locator)
+    if prompt_text:
+        payload["existing_prompt_text"] = prompt_text
     if _git_config:
         payload.update(_git_config)
     if t.task_overrides:

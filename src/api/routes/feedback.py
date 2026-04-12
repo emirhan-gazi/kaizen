@@ -165,11 +165,13 @@ async def create_feedback(
     task = await _resolve_task(body, db)
     auto_created = body.task_id is None and body.task_name is not None
 
-    # Backfill prompt_file/prompt_locator if missing on existing task
+    # Backfill prompt metadata if missing on existing task
     if body.prompt_file and not task.prompt_file:
         task.prompt_file = body.prompt_file
     if body.prompt_locator and not task.prompt_locator:
         task.prompt_locator = body.prompt_locator
+    if body.existing_prompt_text and not task.existing_prompt_text:
+        task.existing_prompt_text = body.existing_prompt_text
 
     # Validate inputs against task schema — strict exact field match (D-05)
     # Skip validation for auto-created tasks (schema was inferred, not enforced)

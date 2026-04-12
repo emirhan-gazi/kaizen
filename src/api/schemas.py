@@ -107,6 +107,7 @@ class FeedbackCreate(BaseModel):
     mode: str | None = Field(default=None, pattern=r"^(optimize_only|auto_pr|pr_preview)$")
     optimizer_type: str | None = Field(default=None, pattern=r"^(miprov2|gepa)$")
     gepa_config: dict | None = None
+    existing_prompt_text: str | None = None
 
     @model_validator(mode="after")
     def require_task_id_or_name(self) -> "FeedbackCreate":
