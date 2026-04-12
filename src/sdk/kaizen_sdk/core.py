@@ -244,7 +244,13 @@ def get_buffered_traces() -> list[dict]:
     except LookupError:
         return []
     return [
-        {"task_name": t.task_name, "inputs": t.inputs, "output": t.output}
+        {
+            "task_name": t.task_name,
+            "inputs": t.inputs,
+            "output": t.output,
+            "prompt_file": t.prompt_file,
+            "prompt_locator": t.prompt_locator,
+        }
         for t in buf.traces
     ]
 
