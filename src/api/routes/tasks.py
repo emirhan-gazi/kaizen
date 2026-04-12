@@ -207,6 +207,8 @@ async def get_task(
         prompt_path=task.prompt_path,
         prompt_format=task.prompt_format,
         mode=task.mode,
+        optimizer_type=task.optimizer_type,
+        gepa_config=task.gepa_config,
         created_at=task.created_at,
         feedback_count=fb_count,
         last_optimization=last_opt,
