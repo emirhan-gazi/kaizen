@@ -1,0 +1,75 @@
+{
+  "task_name": "kwr_analyze_test",
+  "optimizer": "gepa",
+  "description": "GEPA ile KWR analyze prompt optimizasyonu test verisi. 6 mock feedback ve GEPA'nin urettigi optimize edilmis prompt.",
+  "feedbacks": [
+    {
+      "inputs": {
+        "query": "M: Faturami ogrenmek istiyorum",
+        "max_intents": "3",
+        "candidate_intents": "1. paket_oneri",
+        "conversation_memory": ""
+      },
+      "output": "[{\"intent_name\":\"fatura_detay\",\"confidence\":0.95}]",
+      "score": 0.9
+    },
+    {
+      "inputs": {
+        "query": "MT: Paketleri listeledim. M: Tamam",
+        "max_intents": "3",
+        "candidate_intents": "1. paket_oneri 2. fatura_detay 3. bos_intent",
+        "conversation_memory": "Tarife sorgusu"
+      },
+      "output": "[{\"intent_name\":\"bos_intent\",\"confidence\":0.92}]",
+      "score": 0.85
+    },
+    {
+      "inputs": {
+        "query": "MT: Baska konu? M: Hattimi iptal etmek istiyorum",
+        "max_intents": "3",
+        "candidate_intents": "1. paket_oneri 2. fatura_detay 3. cayma_bedeli 4. bos_intent",
+        "conversation_memory": ""
+      },
+      "output": "[{\"intent_name\":\"cayma_bedeli\",\"confidence\":0.97}]",
+      "score": 0.95
+    },
+    {
+      "inputs": {
+        "query": "MT: Tarifeniz 150 TL. M: Daha uygun paket var mi?",
+        "max_intents": "3",
+        "candidate_intents": "1. paket_oneri 2. fatura_detay 3. prorate 4. bos_intent",
+        "conversation_memory": "Memnun degil"
+      },
+      "output": "[{\"intent_name\":\"paket_oneri\",\"confidence\":0.95}]",
+      "score": 0.9
+    },
+    {
+      "inputs": {
+        "query": "MT: Degisikligi yapiyorum. M: Geciste ne kadar ucret yansar?",
+        "max_intents": "3",
+        "candidate_intents": "1. paket_oneri 2. fatura_detay 3. prorate 4. bos_intent",
+        "conversation_memory": "Paket degisikligi"
+      },
+      "output": "[{\"intent_name\":\"prorate\",\"confidence\":0.93}]",
+      "score": 0.88
+    },
+    {
+      "inputs": {
+        "query": "MT: Faturaniz 200 TL. M: Cok fazla, ucuz paket var mi?",
+        "max_intents": "3",
+        "candidate_intents": "1. paket_oneri 2. fatura_detay 3. cayma_bedeli 4. bos_intent",
+        "conversation_memory": "Fatura sorgusu"
+      },
+      "output": "[{\"intent_name\":\"paket_oneri\",\"confidence\":0.90},{\"intent_name\":\"fatura_detay\",\"confidence\":0.55}]",
+      "score": 0.8
+    }
+  ],
+  "optimized_prompt": {
+    "version": 1,
+    "optimizer": "GEPA",
+    "dspy_version": "3.1.3",
+    "eval_score": 0.0,
+    "judge_score": 0.59,
+    "status": "draft"
+  }
+}
