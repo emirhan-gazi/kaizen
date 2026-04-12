@@ -247,7 +247,7 @@ def _run_pipeline(
 
     # --- Dual scoring: dataset score + judge score ---
     # Dataset score: how well the optimized prompt performs on validation set
-    dataset_score = _get_best_score(optimizer, metric_fn, compiled, val)
+    dataset_score = _get_best_score(None, metric_fn, compiled, val)
 
     # Judge score: independent LLM evaluation of the optimized prompt quality
     _update_job_status(session, job, "COMPILING", "judge_evaluation")
