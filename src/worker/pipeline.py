@@ -211,6 +211,8 @@ def _run_pipeline(
     # --- EVALUATING -> COMPILING ---
     optimizer_type = task.optimizer_type or settings.DEFAULT_OPTIMIZER
 
+    task_max_trials = settings.MAX_TRIALS_DEFAULT
+
     if optimizer_type == "gepa":
         _update_job_status(session, job, "COMPILING", "running_gepa")
         compiled = _run_gepa(
