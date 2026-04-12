@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     MAX_TRIALS_DEFAULT: int = 15
     LLM_TIMEOUT: int = 120  # seconds, HTTP timeout on LiteLLM calls
     OPTIMIZATION_WALL_TIMEOUT: int = 1800  # seconds, 30 min wall-clock kill
+    DEFAULT_OPTIMIZER: str = "miprov2"  # miprov2 | gepa
+    GEPA_AUTO: str = "medium"  # light | medium | heavy
 
     # Git Provider Config (provider-agnostic)
     GIT_PROVIDER: str = "github"  # github | bitbucket_server | gitlab

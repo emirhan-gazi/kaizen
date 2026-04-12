@@ -41,6 +41,10 @@ class Task(Base):
     teacher_model: Mapped[str | None] = mapped_column(String, nullable=True)
     judge_model: Mapped[str | None] = mapped_column(String, nullable=True)
     module_type: Mapped[str] = mapped_column(String, default="predict")
+    optimizer_type: Mapped[str] = mapped_column(
+        String, default="miprov2", server_default=text("'miprov2'")
+    )
+    gepa_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     cost_budget: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Git provider config (per-task overrides)
     git_provider: Mapped[str | None] = mapped_column(String, nullable=True)

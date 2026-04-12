@@ -52,6 +52,8 @@ def init(
     teacher_model: str | None = None,
     judge_model: str | None = None,
     mode: str = "optimize_only",
+    optimizer_type: str | None = None,
+    gepa_config: dict | None = None,
 ) -> None:
     """Initialize Kaizen SDK. Call once at startup.
 
@@ -91,6 +93,10 @@ def init(
         _task_defaults["teacher_model"] = teacher_model
     if judge_model:
         _task_defaults["judge_model"] = judge_model
+    if optimizer_type:
+        _task_defaults["optimizer_type"] = optimizer_type
+    if gepa_config:
+        _task_defaults["gepa_config"] = gepa_config
 
 
 def _get_async_client() -> httpx.AsyncClient:

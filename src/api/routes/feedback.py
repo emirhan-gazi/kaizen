@@ -145,6 +145,8 @@ async def _resolve_task(body: FeedbackCreate, db: AsyncSession) -> Task:
         prompt_file=body.prompt_file,
         prompt_locator=body.prompt_locator,
         mode=body.mode or "optimize_only",
+        optimizer_type=body.optimizer_type or settings.DEFAULT_OPTIMIZER,
+        gepa_config=body.gepa_config,
     )
     db.add(task)
     await db.flush()
