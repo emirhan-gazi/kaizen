@@ -42,7 +42,7 @@ class Task(Base):
     judge_model: Mapped[str | None] = mapped_column(String, nullable=True)
     module_type: Mapped[str] = mapped_column(String, default="predict")
     optimizer_type: Mapped[str] = mapped_column(
-        String, default="miprov2", server_default=text("'miprov2'")
+        String, default="gepa", server_default=text("'gepa'")
     )
     gepa_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     cost_budget: Mapped[float | None] = mapped_column(Float, nullable=True)

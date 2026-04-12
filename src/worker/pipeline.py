@@ -213,7 +213,16 @@ def _run_pipeline(
 
     task_max_trials = settings.MAX_TRIALS_DEFAULT
 
-    if optimizer_type == "gepa":
+    if optimizer_type == "miprov2":
+        _update_job_status(session, job, "COMPILING", "running_miprov2")
+        compiled = _run_miprov2(
+            module=module,
+            metric_fn=metric_fn,
+            teacher_lm=teacher_lm,
+            train=train,
+            val=val,
+        )
+    else:
         _update_job_status(session, job, "COMPILING", "running_gepa")
         compiled = _run_gepa(
             module=module,
@@ -222,15 +231,6 @@ def _run_pipeline(
             train=train,
             val=val,
             task=task,
-        )
-    else:
-        _update_job_status(session, job, "COMPILING", "running_miprov2")
-        compiled = _run_miprov2(
-            module=module,
-            metric_fn=metric_fn,
-            teacher_lm=teacher_lm,
-            train=train,
-            val=val,
         )
 
     # --- Save compiled state (Pattern 3 from ARCHITECTURE.md) ---

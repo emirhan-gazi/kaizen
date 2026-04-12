@@ -20,7 +20,7 @@ class TaskCreate(BaseModel):
     teacher_model: str | None = None
     judge_model: str | None = None
     module_type: str = Field(default="predict", pattern=r"^(predict|chain_of_thought)$")
-    optimizer_type: str = Field(default="miprov2", pattern=r"^(miprov2|gepa)$")
+    optimizer_type: str = Field(default="gepa", pattern=r"^(miprov2|gepa)$")
     gepa_config: dict | None = None
     cost_budget: float | None = Field(default=None, gt=0)
     # Git provider config (per-task overrides)
@@ -53,7 +53,7 @@ class TaskSummary(BaseModel):
     teacher_model: str | None = None
     judge_model: str | None = None
     module_type: str = "predict"
-    optimizer_type: str = "miprov2"
+    optimizer_type: str = "gepa"
     gepa_config: dict | None = None
     cost_budget: float | None = None
     git_provider: str | None = None
