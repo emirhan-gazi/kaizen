@@ -20,6 +20,8 @@ class TaskCreate(BaseModel):
     teacher_model: str | None = None
     judge_model: str | None = None
     module_type: str = Field(default="predict", pattern=r"^(predict|chain_of_thought)$")
+    optimizer_type: str = Field(default="gepa", pattern=r"^(miprov2|gepa)$")
+    gepa_config: dict | None = None
     cost_budget: float | None = Field(default=None, gt=0)
     # Git provider config (per-task overrides)
     git_provider: str | None = Field(default=None, pattern=r"^(github|bitbucket_server|gitlab)$")
@@ -51,6 +53,8 @@ class TaskSummary(BaseModel):
     teacher_model: str | None = None
     judge_model: str | None = None
     module_type: str = "predict"
+    optimizer_type: str = "gepa"
+    gepa_config: dict | None = None
     cost_budget: float | None = None
     git_provider: str | None = None
     git_base_url: str | None = None
@@ -101,6 +105,9 @@ class FeedbackCreate(BaseModel):
     teacher_model: str | None = None
     judge_model: str | None = None
     mode: str | None = Field(default=None, pattern=r"^(optimize_only|auto_pr|pr_preview)$")
+    optimizer_type: str | None = Field(default=None, pattern=r"^(miprov2|gepa)$")
+    gepa_config: dict | None = None
+    existing_prompt_text: str | None = None
 
     @model_validator(mode="after")
     def require_task_id_or_name(self) -> "FeedbackCreate":

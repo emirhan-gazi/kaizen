@@ -52,6 +52,8 @@ def init(
     teacher_model: str | None = None,
     judge_model: str | None = None,
     mode: str = "optimize_only",
+    optimizer_type: str | None = None,
+    gepa_config: dict | None = None,
 ) -> None:
     """Initialize Kaizen SDK. Call once at startup.
 
@@ -91,6 +93,10 @@ def init(
         _task_defaults["teacher_model"] = teacher_model
     if judge_model:
         _task_defaults["judge_model"] = judge_model
+    if optimizer_type:
+        _task_defaults["optimizer_type"] = optimizer_type
+    if gepa_config:
+        _task_defaults["gepa_config"] = gepa_config
 
 
 def _get_async_client() -> httpx.AsyncClient:
@@ -238,9 +244,27 @@ def get_buffered_traces() -> list[dict]:
     except LookupError:
         return []
     return [
-        {"task_name": t.task_name, "inputs": t.inputs, "output": t.output}
+        {
+            "task_name": t.task_name,
+            "inputs": t.inputs,
+            "output": t.output,
+            "prompt_file": t.prompt_file,
+            "prompt_locator": t.prompt_locator,
+        }
         for t in buf.traces
     ]
+
+
+def _read_prompt_from_file(prompt_file: str | None, prompt_locator: str | None) -> str | None:
+    """Try to read the prompt text from a local file using AST parsing."""
+    if not prompt_file or not prompt_locator:
+        return None
+    try:
+        from kaizen_sdk.detect import _parse_file_assignments  # noqa: PLC0415
+        assignments = _parse_file_assignments(prompt_file)
+        return assignments.get(prompt_locator)
+    except Exception:
+        return None
 
 
 def _build_feedback_payload(t: BufferedTrace, score: float) -> dict:
@@ -253,6 +277,9 @@ def _build_feedback_payload(t: BufferedTrace, score: float) -> dict:
         "prompt_file": t.prompt_file,
         "prompt_locator": t.prompt_locator,
     }
+    prompt_text = _read_prompt_from_file(t.prompt_file, t.prompt_locator)
+    if prompt_text:
+        payload["existing_prompt_text"] = prompt_text
     if _git_config:
         payload.update(_git_config)
     if t.task_overrides:

@@ -209,28 +209,28 @@ def _run_pipeline(
     metric_fn = create_evaluator(task, settings)
 
     # --- EVALUATING -> COMPILING ---
-    _update_job_status(session, job, "COMPILING", "running_miprov2")
+    optimizer_type = task.optimizer_type or settings.DEFAULT_OPTIMIZER
 
     task_max_trials = settings.MAX_TRIALS_DEFAULT
 
-    # Conservative optimization: small incremental prompt changes
-    # - max_bootstrapped_demos=1: minimal few-shot examples
-    # - max_labeled_demos=1: keep prompt close to original
-    # - num_candidates=task_max_trials: explore within tight bounds
-    with dspy.context(lm=teacher_lm):
-        optimizer = dspy.MIPROv2(
-            metric=metric_fn,
-            auto=None,
-            num_candidates=task_max_trials,
-            max_bootstrapped_demos=1,
-            max_labeled_demos=1,
+    if optimizer_type == "miprov2":
+        _update_job_status(session, job, "COMPILING", "running_miprov2")
+        compiled = _run_miprov2(
+            module=module,
+            metric_fn=metric_fn,
+            teacher_lm=teacher_lm,
+            train=train,
+            val=val,
         )
-        compiled = optimizer.compile(
-            module,
-            trainset=train,
-            num_trials=task_max_trials,
-            valset=val,
-            minibatch_size=min(len(val), 25),
+    else:
+        _update_job_status(session, job, "COMPILING", "running_gepa")
+        compiled = _run_gepa(
+            module=module,
+            metric_fn=metric_fn,
+            teacher_lm=teacher_lm,
+            train=train,
+            val=val,
+            task=task,
         )
 
     # --- Save compiled state (Pattern 3 from ARCHITECTURE.md) ---
@@ -249,7 +249,7 @@ def _run_pipeline(
 
     # --- Dual scoring: dataset score + judge score ---
     # Dataset score: how well the optimized prompt performs on validation set
-    dataset_score = _get_best_score(optimizer, metric_fn, compiled, val)
+    dataset_score = _get_best_score(None, metric_fn, compiled, val)
 
     # Judge score: independent LLM evaluation of the optimized prompt quality
     _update_job_status(session, job, "COMPILING", "judge_evaluation")
@@ -272,7 +272,7 @@ def _run_pipeline(
         eval_score=dataset_score,
         judge_score=judge_score,
         status="draft",
-        optimizer="MIPROv2",
+        optimizer=optimizer_type.upper(),
         dspy_version=dspy.__version__,
     )
     session.add(prompt_version)
@@ -336,7 +336,7 @@ def _run_pipeline(
             before_score=prev_score,
             after_score=dataset_score,
             feedback_count=len(examples),
-            optimizer="MIPROv2",
+            optimizer=optimizer_type.upper(),
             teacher_model=job_meta.get("teacher_model", settings.TEACHER_MODEL),
             judge_model=job_meta.get("judge_model", settings.JUDGE_MODEL),
             trials_completed=job_meta.get("trials_completed", 0),
@@ -714,7 +714,7 @@ def _load_existing_prompt(session: Session, task: Any) -> str | None:
         except Exception as exc:
             logger.warning("Could not load existing prompt from git: %s", exc)
 
-    # Fallback: try latest prompt version from DB
+    # Fallback 1: try latest prompt version from DB
     latest = (
         session.query(PromptVersion)
         .filter_by(task_id=task.id)
@@ -723,6 +723,11 @@ def _load_existing_prompt(session: Session, task: Any) -> str | None:
     )
     if latest and latest.prompt_text:
         return latest.prompt_text
+
+    # Fallback 2: prompt text captured by SDK from local filesystem
+    if getattr(task, "existing_prompt_text", None):
+        logger.info("Using SDK-captured prompt text (%d chars)", len(task.existing_prompt_text))
+        return task.existing_prompt_text
 
     return None
 
@@ -859,3 +864,93 @@ def _reset_cost_tracker() -> _CostTracker:
     if _tracker.success_callback not in litellm.success_callback:
         litellm.success_callback.append(_tracker.success_callback)
     return _tracker
+
+
+# ---------------------------------------------------------------------------
+# Optimizer implementations
+# ---------------------------------------------------------------------------
+
+
+def _run_miprov2(
+    module: Any,
+    metric_fn: Any,
+    teacher_lm: Any,
+    train: list,
+    val: list,
+) -> Any:
+    """Run DSPy MIPROv2 optimization (original behavior)."""
+    task_max_trials = settings.MAX_TRIALS_DEFAULT
+
+    with dspy.context(lm=teacher_lm):
+        optimizer = dspy.MIPROv2(
+            metric=metric_fn,
+            auto=None,
+            num_candidates=task_max_trials,
+            max_bootstrapped_demos=1,
+            max_labeled_demos=1,
+        )
+        return optimizer.compile(
+            module,
+            trainset=train,
+            num_trials=task_max_trials,
+            valset=val,
+            minibatch_size=min(len(val), 25),
+        )
+
+
+def _run_gepa(
+    module: Any,
+    metric_fn: Any,
+    teacher_lm: Any,
+    train: list,
+    val: list,
+    task: Any,
+) -> Any:
+    """Run DSPy GEPA optimization.
+
+    GEPA requires metrics that return ScoreWithFeedback instead of plain
+    floats. This wrapper adapts existing evaluators automatically.
+    Task.gepa_config can override defaults (auto, track_stats).
+    """
+    from dspy.teleprompt.gepa.gepa_utils import ScoreWithFeedback  # noqa: PLC0415
+
+    gepa_config = task.gepa_config or {}
+    auto_level = gepa_config.get("auto", settings.GEPA_AUTO)
+    track_stats = gepa_config.get("track_stats", True)
+
+    def gepa_metric(example, pred, trace=None, pred_name=None, pred_trace=None):
+        """Wrap the task's evaluator to return ScoreWithFeedback for GEPA."""
+        score = metric_fn(example, pred, trace)
+        expected = getattr(example, "response", "")
+        predicted = getattr(pred, "response", "")
+
+        feedback_parts = []
+        if expected and predicted:
+            if expected.strip() == predicted.strip():
+                feedback_parts.append("Exact match.")
+            else:
+                feedback_parts.append(
+                    f"Expected: {expected[:200]}... | Got: {predicted[:200]}..."
+                )
+        if score < 0.5:
+            feedback_parts.append("Low quality — significant mismatch.")
+        elif score < 0.8:
+            feedback_parts.append("Acceptable but room for improvement.")
+
+        return ScoreWithFeedback(
+            score=score,
+            feedback=" ".join(feedback_parts) if feedback_parts else None,
+        )
+
+    with dspy.context(lm=teacher_lm):
+        optimizer = dspy.GEPA(
+            metric=gepa_metric,
+            auto=auto_level,
+            reflection_lm=teacher_lm,
+            track_stats=track_stats,
+        )
+        return optimizer.compile(
+            module,
+            trainset=train,
+            valset=val if val else None,
+        )
